@@ -116,6 +116,15 @@ class CommunityRepository:
             )
             await self._db.execute(
                 """
+                CREATE TABLE IF NOT EXISTS ticket_transcripts (
+                    ticket_id INTEGER PRIMARY KEY,
+                    transcript BLOB NOT NULL,
+                    saved_at TEXT NOT NULL
+                )
+                """
+            )
+            await self._db.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket
                 ON ticket_events(ticket_id, event_id)
                 """
@@ -313,6 +322,35 @@ class CommunityRepository:
                 (ticket_id, guild_id, actor_id, event, details, created_at),
             )
             await self._connection().commit()
+
+    async def save_ticket_transcript(
+        self,
+        *,
+        ticket_id: int,
+        transcript: bytes,
+    ) -> None:
+        saved_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        async with self._lock:
+            await self._connection().execute(
+                """
+                INSERT INTO ticket_transcripts (ticket_id, transcript, saved_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(ticket_id) DO UPDATE SET
+                    transcript = excluded.transcript,
+                    saved_at = excluded.saved_at
+                """,
+                (ticket_id, transcript, saved_at),
+            )
+            await self._connection().commit()
+
+    async def get_ticket_transcript(self, ticket_id: int) -> bytes | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT transcript FROM ticket_transcripts WHERE ticket_id = ?",
+                (ticket_id,),
+            )
+            row = await cursor.fetchone()
+        return bytes(row["transcript"]) if row is not None else None
 
     async def create_giveaway(
         self,

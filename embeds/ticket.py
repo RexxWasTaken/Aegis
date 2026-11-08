@@ -117,7 +117,8 @@ def ticket_delete_confirmation_embed(ticket: TicketRecord) -> discord.Embed:
         title=f"{emoji_markup('warning')} Delete ticket #{ticket.ticket_id}?",
         description=(
             "Confirming permanently deletes this ticket channel. "
-            "The saved ticket record and event history will remain."
+            "The saved ticket record, event history, and transcript will remain. "
+            "A transcript copy will be sent to the confirming staff member."
         ),
         color=TICKET_COLOR,
     )

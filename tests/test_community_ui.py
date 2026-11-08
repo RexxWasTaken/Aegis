@@ -14,7 +14,12 @@ from core.giveaway_manager import (
     IncompleteParticipantList,
 )
 from database.repositories.community import GiveawayRecord
-from embeds.giveaway import giveaway_announcement, giveaway_ended_embed
+from embeds.giveaway import (
+    GIVEAWAY_COLOR,
+    giveaway_announcement,
+    giveaway_ended_embed,
+    giveaway_info_embed,
+)
 from embeds.help import help_front_page
 from embeds.ticket import ticket_panel_embed
 
@@ -61,6 +66,8 @@ class CommunityUiTests(unittest.IsolatedAsyncioTestCase):
             f"React with {emoji_markup('giveaway')} to enter!",
             announcement.description,
         )
+        self.assertEqual(announcement.color, discord.Color(0x00B8D9))
+        self.assertEqual(GIVEAWAY_COLOR, discord.Color(0x00B8D9))
         self.assertNotIn("🎉", announcement.title + announcement.description)
 
         record = GiveawayRecord(
@@ -80,6 +87,10 @@ class CommunityUiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<:giveaway:1518667382581760110> GIVEAWAY ENDED", ended.title)
         self.assertIn(f"{emoji_markup('success')} <@20>", ended.description)
         self.assertNotIn("🎉", ended.title + ended.description)
+
+        info = giveaway_info_embed(record)
+        self.assertLessEqual(len(info), 6000)
+        self.assertIn("Selected winners", {field.name for field in info.fields})
 
     async def test_participants_are_fetched_from_the_exact_current_reaction(self) -> None:
         host_id, bot_id, entrant_id = 10, 99, 20

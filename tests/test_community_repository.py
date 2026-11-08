@@ -121,6 +121,28 @@ class CommunityRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.repository.delete_giveaway(500))
         self.assertIsNone(await self.repository.get_giveaway(500))
 
+    async def test_ticket_transcript_is_durable_across_repository_restart(self) -> None:
+        ticket = await self.repository.create_ticket(
+            guild_id=10,
+            channel_id=100,
+            creator_id=200,
+            category="General Support",
+        )
+        transcript = b"complete transcript\nwith multiple lines"
+        await self.repository.save_ticket_transcript(
+            ticket_id=ticket.ticket_id,
+            transcript=transcript,
+        )
+
+        await self.repository.close()
+        self.repository = CommunityRepository(self.database_path)
+        await self.repository.initialize()
+
+        self.assertEqual(
+            await self.repository.get_ticket_transcript(ticket.ticket_id),
+            transcript,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

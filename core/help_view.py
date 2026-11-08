@@ -98,7 +98,7 @@ def _category_for(command: object) -> str:
     cleaned_name = cog_name.removesuffix("cog").replace("_", " ").strip()
     if cleaned_name:
         return " ".join(part.capitalize() for part in cleaned_name.split())
-    return "Utility"
+    return "Uncategorized"
 
 
 def _extras(command: object) -> dict[str, Any]:

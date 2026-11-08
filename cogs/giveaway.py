@@ -6,8 +6,8 @@ import discord
 from discord.ext import commands, tasks
 
 from core.giveaway_manager import GiveawayManager, GiveawayManagerError
-from database.repositories.community import CommunityRepository
-from embeds.giveaway import giveaway_list_embed
+from database.repositories.community import CommunityRepository, GiveawayRecord
+from embeds.giveaway import giveaway_info_embed, giveaway_list_embed
 from utils.duration import parse_duration
 
 
@@ -51,7 +51,7 @@ class GiveawayCog(commands.Cog):
 
     async def _require_guild_giveaway(
         self, ctx: commands.Context, message_id: int
-    ) -> None:
+    ) -> GiveawayRecord:
         if ctx.guild is None:
             raise commands.NoPrivateMessage()
         giveaway = await self.manager.repository.get_giveaway(message_id)
@@ -59,6 +59,7 @@ class GiveawayCog(commands.Cog):
             raise GiveawayManagerError("No giveaway is registered for that message ID.")
         if giveaway.guild_id != ctx.guild.id:
             raise GiveawayManagerError("That giveaway belongs to another server.")
+        return giveaway
 
     @giveaway.command(
         name="start",
@@ -155,6 +156,22 @@ class GiveawayCog(commands.Cog):
             raise commands.NoPrivateMessage()
         records = await self.manager.repository.list_giveaways(guild_id=ctx.guild.id)
         await ctx.send(embed=giveaway_list_embed(records))
+
+    @giveaway.command(name="info", description="Show the saved details for a giveaway.")
+    @commands.has_guild_permissions(manage_guild=True)
+    async def info(self, ctx: commands.Context, message_id: int) -> None:
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        try:
+            record = await self._require_guild_giveaway(ctx, message_id)
+        except (GiveawayManagerError, ValueError) as exc:
+            await ctx.send(str(exc))
+            return
+        await ctx.send(
+            embed=giveaway_info_embed(record),
+            allowed_mentions=discord.AllowedMentions.none(),
+            ephemeral=ctx.interaction is not None,
+        )
 
     @giveaway.command(name="delete", description="Delete a giveaway and its announcement.")
     @commands.has_guild_permissions(manage_guild=True)
