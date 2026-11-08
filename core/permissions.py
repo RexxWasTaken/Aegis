@@ -63,11 +63,28 @@ def _validate_member_target(
     moderator_id = getattr(moderator, "id", None)
     bot_id = getattr(bot_member, "id", None)
     if target_id == moderator_id:
-        raise ModerationTargetError(f"You cannot {action} yourself.")
+        action_label = {
+            "voicemute": "voice-mute",
+            "voiceunmute": "voice-unmute",
+        }.get(action, action)
+        raise ModerationTargetError(f"You cannot {action_label} yourself.")
     if target_id == bot_id:
-        raise ModerationTargetError(f"The bot cannot {action} itself.")
+        action_label = {
+            "voicemute": "voice-mute",
+            "voiceunmute": "voice-unmute",
+        }.get(action, action)
+        raise ModerationTargetError(f"The bot cannot {action_label} itself.")
     if target_id == getattr(guild, "owner_id", None):
-        participle = "banned" if action == "ban" else "kicked"
+        participles = {
+            "ban": "banned",
+            "kick": "kicked",
+            "timeout": "timed out",
+            "voicemute": "voice-muted",
+            "voiceunmute": "voice-unmuted",
+            "deafen": "deafened",
+            "undeafen": "undeafened",
+        }
+        participle = participles.get(action, f"{action}ed")
         raise ModerationTargetError(f"The server owner cannot be {participle}.")
 
     if moderator_id != getattr(guild, "owner_id", None):
@@ -102,6 +119,47 @@ def validate_kick_target(
     """Validate kick permissions, membership, protected users, and hierarchy."""
     _validate_member_target(
         guild, target, moderator, bot_member, permission="kick_members", action="kick"
+    )
+
+
+def validate_timeout_target(
+    guild: object,
+    target: object,
+    moderator: object,
+    bot_member: object,
+) -> None:
+    """Validate timeout permissions, membership, protected users, and hierarchy."""
+    _validate_member_target(
+        guild,
+        target,
+        moderator,
+        bot_member,
+        permission="moderate_members",
+        action="timeout",
+    )
+
+
+def validate_voice_target(
+    guild: object,
+    target: object,
+    moderator: object,
+    bot_member: object,
+    *,
+    action: str,
+) -> None:
+    """Validate server voice moderation permission and target hierarchy."""
+    if action not in {"voicemute", "voiceunmute", "deafen", "undeafen"}:
+        raise ValueError("Unsupported voice moderation action.")
+    permission = (
+        "deafen_members" if action in {"deafen", "undeafen"} else "mute_members"
+    )
+    _validate_member_target(
+        guild,
+        target,
+        moderator,
+        bot_member,
+        permission=permission,
+        action=action,
     )
 
 

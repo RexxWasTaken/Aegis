@@ -5,7 +5,12 @@ from __future__ import annotations
 from discord.ext import commands
 
 
-MODERATION_EXTENSIONS = ("cogs.moderation.bans", "cogs.moderation.kicks")
+MODERATION_EXTENSIONS = (
+    "cogs.moderation.bans",
+    "cogs.moderation.kicks",
+    "cogs.moderation.timeouts",
+    "cogs.moderation.voice_moderation",
+)
 
 
 async def load_extensions(bot: commands.Bot) -> None:
