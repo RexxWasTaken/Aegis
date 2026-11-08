@@ -1,0 +1,473 @@
+"""SQLite persistence for ticket and reaction-giveaway community features."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+import aiosqlite
+
+
+@dataclass(frozen=True)
+class TicketConfig:
+    guild_id: int
+    staff_role_id: int
+    category_id: int | None
+    log_channel_id: int | None
+
+
+@dataclass(frozen=True)
+class TicketRecord:
+    ticket_id: int
+    guild_id: int
+    channel_id: int
+    creator_id: int
+    category: str
+    status: str
+    claimed_by: int | None
+    created_at: str
+    closed_at: str | None
+
+
+@dataclass(frozen=True)
+class GiveawayRecord:
+    message_id: int
+    guild_id: int
+    channel_id: int
+    host_id: int
+    prize: str
+    winner_count: int
+    ends_at: str
+    status: str
+    paused_seconds: int | None
+    winners: tuple[int, ...]
+    created_at: str
+
+
+class CommunityRepository:
+    """Store community state in the existing AEGIS SQLite database."""
+
+    def __init__(self, db_path: str | Path) -> None:
+        self.db_path = str(db_path)
+        self._db: aiosqlite.Connection | None = None
+        self._lock = asyncio.Lock()
+
+    async def initialize(self) -> None:
+        async with self._lock:
+            if self._db is not None:
+                return
+            if self.db_path != ":memory:":
+                Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+            self._db = await aiosqlite.connect(self.db_path)
+            self._db.row_factory = aiosqlite.Row
+            await self._db.execute("PRAGMA foreign_keys = ON")
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ticket_configs (
+                    guild_id INTEGER PRIMARY KEY,
+                    staff_role_id INTEGER NOT NULL,
+                    category_id INTEGER,
+                    log_channel_id INTEGER
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tickets (
+                    ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL UNIQUE,
+                    creator_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    claimed_by INTEGER,
+                    created_at TEXT NOT NULL,
+                    closed_at TEXT
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_one_open_per_creator
+                ON tickets(guild_id, creator_id) WHERE status = 'open'
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_tickets_guild_status
+                ON tickets(guild_id, status, ticket_id)
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ticket_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id INTEGER NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    actor_id INTEGER NOT NULL,
+                    event TEXT NOT NULL,
+                    details TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket
+                ON ticket_events(ticket_id, event_id)
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS giveaways (
+                    message_id INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    host_id INTEGER NOT NULL,
+                    prize TEXT NOT NULL,
+                    winner_count INTEGER NOT NULL CHECK (winner_count > 0),
+                    ends_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    paused_seconds INTEGER,
+                    winners_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_giveaways_due
+                ON giveaways(status, ends_at)
+                """
+            )
+            await self._db.commit()
+
+    def _connection(self) -> aiosqlite.Connection:
+        if self._db is None:
+            raise RuntimeError("CommunityRepository.initialize() must be called first.")
+        return self._db
+
+    async def set_ticket_config(
+        self,
+        *,
+        guild_id: int,
+        staff_role_id: int,
+        category_id: int | None,
+        log_channel_id: int | None,
+    ) -> TicketConfig:
+        async with self._lock:
+            await self._connection().execute(
+                """
+                INSERT INTO ticket_configs
+                    (guild_id, staff_role_id, category_id, log_channel_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    staff_role_id = excluded.staff_role_id,
+                    category_id = excluded.category_id,
+                    log_channel_id = excluded.log_channel_id
+                """,
+                (guild_id, staff_role_id, category_id, log_channel_id),
+            )
+            await self._connection().commit()
+        return TicketConfig(guild_id, staff_role_id, category_id, log_channel_id)
+
+    async def get_ticket_config(self, guild_id: int) -> TicketConfig | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT * FROM ticket_configs WHERE guild_id = ?", (guild_id,)
+            )
+            row = await cursor.fetchone()
+        return TicketConfig(**dict(row)) if row is not None else None
+
+    async def create_ticket(
+        self,
+        *,
+        guild_id: int,
+        channel_id: int,
+        creator_id: int,
+        category: str,
+    ) -> TicketRecord:
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        try:
+            async with self._lock:
+                cursor = await self._connection().execute(
+                    """
+                    INSERT INTO tickets
+                        (guild_id, channel_id, creator_id, category, status, created_at)
+                    VALUES (?, ?, ?, ?, 'open', ?)
+                    """,
+                    (guild_id, channel_id, creator_id, category, created_at),
+                )
+                await self._connection().commit()
+                ticket_id = int(cursor.lastrowid)
+        except aiosqlite.IntegrityError as exc:
+            raise ValueError("This member already has an open ticket.") from exc
+        return TicketRecord(
+            ticket_id=ticket_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            creator_id=creator_id,
+            category=category,
+            status="open",
+            claimed_by=None,
+            created_at=created_at,
+            closed_at=None,
+        )
+
+    async def get_ticket(self, channel_id: int) -> TicketRecord | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT * FROM tickets WHERE channel_id = ?", (channel_id,)
+            )
+            row = await cursor.fetchone()
+        return TicketRecord(**dict(row)) if row is not None else None
+
+    async def get_open_ticket(
+        self, *, guild_id: int, creator_id: int
+    ) -> TicketRecord | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT * FROM tickets
+                WHERE guild_id = ? AND creator_id = ? AND status = 'open'
+                ORDER BY ticket_id DESC LIMIT 1
+                """,
+                (guild_id, creator_id),
+            )
+            row = await cursor.fetchone()
+        return TicketRecord(**dict(row)) if row is not None else None
+
+    async def claim_ticket(
+        self, *, channel_id: int, staff_id: int
+    ) -> TicketRecord:
+        async with self._lock:
+            db = self._connection()
+            await db.execute(
+                """
+                UPDATE tickets SET claimed_by = ?
+                WHERE channel_id = ? AND status = 'open'
+                  AND (claimed_by IS NULL OR claimed_by = ?)
+                """,
+                (staff_id, channel_id, staff_id),
+            )
+            await db.commit()
+            cursor = await db.execute(
+                "SELECT * FROM tickets WHERE channel_id = ?", (channel_id,)
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            raise LookupError("This channel is not a ticket.")
+        ticket = TicketRecord(**dict(row))
+        if ticket.status != "open":
+            raise ValueError("Only open tickets can be claimed.")
+        if ticket.claimed_by != staff_id:
+            raise ValueError("This ticket has already been claimed by another staff member.")
+        return ticket
+
+    async def set_ticket_status(
+        self, *, channel_id: int, status: str, closed_at: str | None
+    ) -> TicketRecord:
+        if status not in {"open", "closed"}:
+            raise ValueError("Ticket status must be open or closed.")
+        async with self._lock:
+            db = self._connection()
+            try:
+                await db.execute(
+                    "UPDATE tickets SET status = ?, closed_at = ? WHERE channel_id = ?",
+                    (status, closed_at, channel_id),
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError as exc:
+                await db.rollback()
+                raise ValueError(
+                    "This member already has another open ticket."
+                ) from exc
+            cursor = await db.execute(
+                "SELECT * FROM tickets WHERE channel_id = ?", (channel_id,)
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            raise LookupError("This channel is not a ticket.")
+        return TicketRecord(**dict(row))
+
+    async def log_ticket_event(
+        self,
+        *,
+        ticket_id: int,
+        guild_id: int,
+        actor_id: int,
+        event: str,
+        details: str,
+    ) -> None:
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        async with self._lock:
+            await self._connection().execute(
+                """
+                INSERT INTO ticket_events
+                    (ticket_id, guild_id, actor_id, event, details, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (ticket_id, guild_id, actor_id, event, details, created_at),
+            )
+            await self._connection().commit()
+
+    async def create_giveaway(
+        self,
+        *,
+        message_id: int,
+        guild_id: int,
+        channel_id: int,
+        host_id: int,
+        prize: str,
+        winner_count: int,
+        ends_at: datetime,
+    ) -> GiveawayRecord:
+        if winner_count < 1:
+            raise ValueError("A giveaway must have at least one winner.")
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        end_value = ends_at.astimezone(timezone.utc).isoformat(timespec="seconds")
+        async with self._lock:
+            await self._connection().execute(
+                """
+                INSERT INTO giveaways
+                    (message_id, guild_id, channel_id, host_id, prize, winner_count,
+                     ends_at, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                """,
+                (
+                    message_id,
+                    guild_id,
+                    channel_id,
+                    host_id,
+                    prize,
+                    winner_count,
+                    end_value,
+                    created_at,
+                ),
+            )
+            await self._connection().commit()
+        return GiveawayRecord(
+            message_id=message_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            host_id=host_id,
+            prize=prize,
+            winner_count=winner_count,
+            ends_at=end_value,
+            status="active",
+            paused_seconds=None,
+            winners=(),
+            created_at=created_at,
+        )
+
+    @staticmethod
+    def _giveaway_from_row(row: aiosqlite.Row) -> GiveawayRecord:
+        values = dict(row)
+        try:
+            winners = tuple(int(value) for value in json.loads(values.pop("winners_json")))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("The saved giveaway winner list is invalid.") from exc
+        return GiveawayRecord(**values, winners=winners)
+
+    async def get_giveaway(self, message_id: int) -> GiveawayRecord | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT * FROM giveaways WHERE message_id = ?", (message_id,)
+            )
+            row = await cursor.fetchone()
+        return self._giveaway_from_row(row) if row is not None else None
+
+    async def update_giveaway(
+        self,
+        *,
+        message_id: int,
+        status: str,
+        ends_at: datetime | None = None,
+        paused_seconds: int | None = None,
+        winners: tuple[int, ...] | None = None,
+    ) -> GiveawayRecord:
+        if status not in {"active", "paused", "ended", "cancelled"}:
+            raise ValueError("Invalid giveaway status.")
+        assignments = ["status = ?"]
+        values: list[object] = [status]
+        if ends_at is not None:
+            assignments.append("ends_at = ?")
+            values.append(ends_at.astimezone(timezone.utc).isoformat(timespec="seconds"))
+        if paused_seconds is not None or status != "paused":
+            assignments.append("paused_seconds = ?")
+            values.append(paused_seconds)
+        if winners is not None:
+            assignments.append("winners_json = ?")
+            values.append(json.dumps([int(value) for value in winners]))
+        values.append(message_id)
+        async with self._lock:
+            db = self._connection()
+            await db.execute(
+                f"UPDATE giveaways SET {', '.join(assignments)} WHERE message_id = ?",
+                values,
+            )
+            await db.commit()
+            cursor = await db.execute(
+                "SELECT * FROM giveaways WHERE message_id = ?", (message_id,)
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            raise LookupError("This giveaway was not found.")
+        return self._giveaway_from_row(row)
+
+    async def list_giveaways(
+        self,
+        *,
+        guild_id: int,
+        statuses: tuple[str, ...] = ("active", "paused"),
+        limit: int = 25,
+    ) -> list[GiveawayRecord]:
+        if not statuses or limit < 1:
+            return []
+        placeholders = ",".join("?" for _ in statuses)
+        async with self._lock:
+            cursor = await self._connection().execute(
+                f"""
+                SELECT * FROM giveaways
+                WHERE guild_id = ? AND status IN ({placeholders})
+                ORDER BY ends_at, message_id LIMIT ?
+                """,
+                (guild_id, *statuses, limit),
+            )
+            rows = await cursor.fetchall()
+        return [self._giveaway_from_row(row) for row in rows]
+
+    async def due_giveaways(
+        self, now: datetime | None = None
+    ) -> list[GiveawayRecord]:
+        cutoff = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT * FROM giveaways
+                WHERE status = 'active' AND ends_at <= ?
+                ORDER BY ends_at, message_id
+                """,
+                (cutoff,),
+            )
+            rows = await cursor.fetchall()
+        return [self._giveaway_from_row(row) for row in rows]
+
+    async def delete_giveaway(self, message_id: int) -> bool:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "DELETE FROM giveaways WHERE message_id = ?", (message_id,)
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def close(self) -> None:
+        async with self._lock:
+            if self._db is not None:
+                await self._db.close()
+                self._db = None
