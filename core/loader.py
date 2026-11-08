@@ -12,6 +12,9 @@ MODERATION_EXTENSIONS = (
     "cogs.moderation.voice_moderation",
     "cogs.moderation.warnings",
     "cogs.moderation.purge",
+    "cogs.moderation.channels",
+    "cogs.moderation.nicknames",
+    "cogs.moderation.jail",
 )
 
 
