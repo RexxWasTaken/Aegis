@@ -5,7 +5,8 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from database.repositories.moderation import ModerationCase
+import discord
+from database.repositories.moderation import ModerationCase, ModerationWarning
 from services.moderation_service import (
     AuditLogError,
     ModerationService,
@@ -27,6 +28,17 @@ def case_record(action: str = "ban") -> ModerationCase:
         created_at="2026-01-01T00:00:00+00:00",
         expires_at=None,
         status="pending",
+    )
+
+
+def warning_record() -> ModerationWarning:
+    return ModerationWarning(
+        warning_id=12,
+        guild_id=1,
+        target_id=30,
+        moderator_id=10,
+        reason="Rule violation",
+        created_at="2026-01-01T00:00:00+00:00",
     )
 
 
@@ -54,10 +66,15 @@ class ModerationServiceTests(unittest.IsolatedAsyncioTestCase):
             kick=AsyncMock(),
             timeout=AsyncMock(),
             edit=AsyncMock(),
+            move_to=AsyncMock(),
         )
         self.repository = SimpleNamespace(
             create_case=AsyncMock(return_value=case_record()),
             update_case_status=AsyncMock(),
+            create_warning=AsyncMock(return_value=warning_record()),
+            list_warnings=AsyncMock(return_value=[warning_record()]),
+            delete_warning=AsyncMock(return_value=warning_record()),
+            clear_warnings=AsyncMock(return_value=1),
         )
         self.service = ModerationService(self.repository)
 
@@ -454,6 +471,142 @@ class ModerationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             self.repository.create_case.await_args.kwargs["action_type"],
             "deafen",
+        )
+
+    async def test_undeafen_removes_server_deafen_and_records_case(self) -> None:
+        self.moderator.guild_permissions.deafen_members = True
+        self.bot_member.guild_permissions.deafen_members = True
+        self.target.voice = SimpleNamespace(channel=SimpleNamespace(id=44))
+        await self.service.undeafen_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            reason="Reviewed",
+        )
+        self.target.edit.assert_awaited_once_with(
+            deafen=False, reason="Case #7: Reviewed"
+        )
+        self.assertEqual(
+            self.repository.create_case.await_args.kwargs["action_type"],
+            "undeafen",
+        )
+
+    async def test_disconnect_requires_voice_and_records_audit_case(self) -> None:
+        self.moderator.guild_permissions.move_members = True
+        self.bot_member.guild_permissions.move_members = True
+        self.target.voice = SimpleNamespace(channel=SimpleNamespace(id=44))
+        await self.service.disconnect_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            reason="Disruption",
+        )
+        self.target.move_to.assert_awaited_once_with(
+            None, reason="Case #7: Disruption"
+        )
+        self.assertEqual(
+            self.repository.create_case.await_args.kwargs["action_type"],
+            "disconnect",
+        )
+
+    async def test_move_requires_same_guild_voice_destination_and_records_case(self) -> None:
+        import discord
+
+        self.moderator.guild_permissions.move_members = True
+        self.bot_member.guild_permissions.move_members = True
+        self.target.voice = SimpleNamespace(channel=SimpleNamespace(id=44))
+        destination = SimpleNamespace(
+            id=55,
+            guild=self.guild,
+            type=discord.ChannelType.voice,
+        )
+        await self.service.move_member(
+            guild=self.guild,
+            target=self.target,
+            destination=destination,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            reason="Move to lobby",
+        )
+        self.target.move_to.assert_awaited_once_with(
+            destination, reason="Case #7: Move to lobby"
+        )
+        self.assertEqual(
+            self.repository.create_case.await_args.kwargs["action_type"],
+            "move",
+        )
+
+        self.target.move_to.reset_mock()
+        foreign_channel = SimpleNamespace(
+            id=77,
+            guild=SimpleNamespace(id=2),
+            type=discord.ChannelType.voice,
+        )
+        with self.assertRaisesRegex(ValueError, "in this server"):
+            await self.service.move_member(
+                guild=self.guild,
+                target=self.target,
+                destination=foreign_channel,
+                moderator=self.moderator,
+                bot_member=self.bot_member,
+            )
+        self.target.move_to.assert_not_awaited()
+
+    async def test_warning_service_records_reads_deletes_and_clears_by_guild(self) -> None:
+        self.moderator.guild_permissions.manage_messages = True
+        warning = await self.service.warn_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            reason="  Rule violation  ",
+        )
+        self.assertEqual(warning.warning_id, 12)
+        self.repository.create_warning.assert_awaited_once_with(
+            guild_id=1,
+            target_id=30,
+            moderator_id=10,
+            reason="Rule violation",
+        )
+        records = await self.service.warnings_for_member(
+            guild=self.guild, target=self.target, moderator=self.moderator
+        )
+        self.assertEqual(records, [warning_record()])
+        self.repository.list_warnings.assert_awaited_once_with(
+            guild_id=1, target_id=30
+        )
+
+        removed = await self.service.remove_warning(
+            guild=self.guild,
+            target=self.target,
+            warning_id=12,
+            moderator=self.moderator,
+        )
+        self.assertEqual(removed, warning_record())
+        self.repository.delete_warning.assert_awaited_once_with(
+            guild_id=1, target_id=30, warning_id=12
+        )
+        count = await self.service.clear_warnings_for_member(
+            guild=self.guild, target=self.target, moderator=self.moderator
+        )
+        self.assertEqual(count, 1)
+        self.repository.clear_warnings.assert_awaited_once_with(
+            guild_id=1, target_id=30
+        )
+
+    async def test_unwarn_rejects_missing_or_wrong_warning_ids(self) -> None:
+        self.moderator.guild_permissions.manage_messages = True
+        self.repository.delete_warning.return_value = None
+        with self.assertRaisesRegex(ValueError, "not found"):
+            await self.service.remove_warning(
+                guild=self.guild,
+                target=self.target,
+                warning_id=999,
+                moderator=self.moderator,
+            )
+        self.repository.delete_warning.assert_awaited_once_with(
+            guild_id=1, target_id=30, warning_id=999
         )
 
 

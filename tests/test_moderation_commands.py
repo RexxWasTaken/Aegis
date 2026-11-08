@@ -9,7 +9,7 @@ from core.bot import AegisBot
 
 
 class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_moderation_extensions_register_first_fourteen_commands_and_aliases(self) -> None:
+    async def test_moderation_extensions_register_first_twenty_one_commands_and_aliases(self) -> None:
         bot = commands.Bot(
             command_prefix="a!",
             intents=discord.Intents.none(),
@@ -21,14 +21,23 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
             await bot.load_extension("cogs.moderation.kicks")
             await bot.load_extension("cogs.moderation.timeouts")
             await bot.load_extension("cogs.moderation.voice_moderation")
+            await bot.load_extension("cogs.moderation.warnings")
             self.assertEqual(
                 {command.name for command in bot.commands},
                 {
                     "ban", "unban", "softban", "tempban", "massban", "kick",
                     "masskick", "timeout", "untimeout", "mute", "unmute",
-                    "voicemute", "voiceunmute", "deafen",
+                    "voicemute", "voiceunmute", "deafen", "undeafen",
+                    "disconnect", "move", "warn", "unwarn", "warnings",
+                    "clearwarnings",
                 },
             )
+            registered_names = [
+                name
+                for command in bot.commands
+                for name in (command.name, *command.aliases)
+            ]
+            self.assertEqual(len(registered_names), len(set(registered_names)))
             self.assertIs(bot.get_command("b"), bot.get_command("ban"))
             self.assertIs(bot.get_command("ub"), bot.get_command("unban"))
             self.assertIs(bot.get_command("k"), bot.get_command("kick"))
@@ -48,7 +57,9 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "ban", "unban", "softban", "tempban", "massban", "kick",
                     "masskick", "timeout", "untimeout", "mute", "unmute",
-                    "voicemute", "voiceunmute", "deafen",
+                    "voicemute", "voiceunmute", "deafen", "undeafen",
+                    "disconnect", "move", "warn", "unwarn", "warnings",
+                    "clearwarnings",
                 },
             )
             self.assertIsNotNone(bot.tempban_expiry_task)

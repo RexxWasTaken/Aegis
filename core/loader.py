@@ -10,6 +10,7 @@ MODERATION_EXTENSIONS = (
     "cogs.moderation.kicks",
     "cogs.moderation.timeouts",
     "cogs.moderation.voice_moderation",
+    "cogs.moderation.warnings",
 )
 
 

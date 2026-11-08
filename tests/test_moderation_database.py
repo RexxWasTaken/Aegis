@@ -80,6 +80,59 @@ class ModerationDatabaseTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.repository.update_case_status(case.case_id, "deleted")
 
+    async def test_warnings_persist_and_are_scoped_by_guild_target_and_id(self) -> None:
+        await self.repository.initialize()
+        first = await self.repository.create_warning(
+            guild_id=1, target_id=2, moderator_id=3, reason="first"
+        )
+        second = await self.repository.create_warning(
+            guild_id=1, target_id=2, moderator_id=4, reason="second"
+        )
+        other_guild = await self.repository.create_warning(
+            guild_id=2, target_id=2, moderator_id=5, reason="different guild"
+        )
+        other_target = await self.repository.create_warning(
+            guild_id=1, target_id=6, moderator_id=7, reason="different target"
+        )
+        self.assertEqual(first.target_id, 2)
+        self.assertEqual(first.moderator_id, 3)
+        self.assertTrue(first.created_at)
+
+        await self.repository.close()
+        self.repository = ModerationRepository(self.path)
+        await self.repository.initialize()
+        warnings = await self.repository.list_warnings(guild_id=1, target_id=2)
+        self.assertEqual([item.warning_id for item in warnings], [second.warning_id, first.warning_id])
+        self.assertEqual(warnings[0].reason, "second")
+
+        self.assertIsNone(
+            await self.repository.delete_warning(
+                guild_id=2, target_id=2, warning_id=first.warning_id
+            )
+        )
+        removed = await self.repository.delete_warning(
+            guild_id=1, target_id=2, warning_id=second.warning_id
+        )
+        self.assertEqual(removed, second)
+        self.assertEqual(
+            await self.repository.clear_warnings(guild_id=1, target_id=2), 1
+        )
+        self.assertEqual(
+            await self.repository.list_warnings(guild_id=1, target_id=2), []
+        )
+        self.assertEqual(
+            [item.warning_id for item in await self.repository.list_warnings(
+                guild_id=2, target_id=2
+            )],
+            [other_guild.warning_id],
+        )
+        self.assertEqual(
+            [item.warning_id for item in await self.repository.list_warnings(
+                guild_id=1, target_id=6
+            )],
+            [other_target.warning_id],
+        )
+
     async def test_expired_tempban_is_claimed_once_for_expiry(self) -> None:
         from datetime import datetime, timezone
 
