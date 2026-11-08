@@ -73,9 +73,9 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
             discovered = discover_commands(bot)
             for mode in ("prefix", "slash"):
                 names = {
-                    name
+                    entry.qualified_name
                     for entries in discovered[mode].values()
-                    for name, _ in entries
+                    for entry in entries
                 }
                 self.assertFalse(any(name.endswith("help") for name in names))
                 self.assertIn("Ticket", discovered[mode])
@@ -84,14 +84,14 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 any(
                     name.startswith("a!ticket")
                     for entries in discovered["prefix"].values()
-                    for name, _ in entries
+                    for name in (entry.usage for entry in entries)
                 )
             )
             self.assertTrue(
                 any(
                     name.startswith("/giveaway")
                     for entries in discovered["slash"].values()
-                    for name, _ in entries
+                    for name in (entry.usage for entry in entries)
                 )
             )
         finally:
