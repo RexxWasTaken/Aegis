@@ -99,19 +99,30 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
             return_value=TicketConfig(10, 99, None, None)
         )
         repository.set_ticket_status = AsyncMock()
+        repository.save_ticket_transcript = AsyncMock()
         manager = TicketManager(Mock(), repository)
         manager.log_event = AsyncMock()
+        manager.transcript_bytes = AsyncMock(return_value=b"complete transcript")
         channel = Mock(spec=discord.TextChannel)
         channel.delete = AsyncMock()
         staff = _member(50, role_ids=(99,))
 
-        await manager.delete(ticket=ticket, channel=channel, actor=staff)
+        transcript = await manager.delete(ticket=ticket, channel=channel, actor=staff)
 
+        self.assertEqual(transcript, b"complete transcript")
+        repository.save_ticket_transcript.assert_awaited_once_with(
+            ticket_id=ticket.ticket_id,
+            transcript=b"complete transcript",
+        )
         channel.delete.assert_awaited_once()
         repository.set_ticket_status.assert_awaited_once()
         self.assertEqual(repository.set_ticket_status.await_args.kwargs["status"], "closed")
         manager.log_event.assert_awaited_once()
         self.assertEqual(manager.log_event.await_args.kwargs["event"], "Deleted")
+        self.assertEqual(
+            manager.log_event.await_args.kwargs["transcript"],
+            b"complete transcript",
+        )
 
     async def test_ticket_delete_rejects_non_staff_without_deleting_channel(self) -> None:
         repository = Mock()

@@ -159,6 +159,20 @@ class HelpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(slash.usage, "/ticket info [channel]")
         self.assertEqual(slash.category, "Ticket")
 
+    def test_uncategorized_commands_do_not_get_a_utility_emoji(self) -> None:
+        command = _prefix_command(
+            "custom",
+            cog_name="",
+            description="A command without a category.",
+        )
+        registry = discover_commands(_FakeBot([command]))
+        categories = ordered_categories(registry)
+
+        self.assertEqual(categories, ["Uncategorized"])
+        embed = help_front_page(categories)
+        self.assertEqual(embed.fields[0].value, "Uncategorized")
+        self.assertNotIn(emoji_markup("utility"), embed.fields[0].value)
+
     def test_command_details_only_show_recorded_examples_and_permissions(self) -> None:
         info = find_command(self.bot, "ban")
         embed = help_command_details(info)

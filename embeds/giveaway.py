@@ -12,7 +12,7 @@ from database.repositories.community import GiveawayRecord
 from utils.duration import format_duration
 
 
-GIVEAWAY_COLOR = discord.Color(0x2ECC71)
+GIVEAWAY_COLOR = discord.Color(0x00B8D9)
 
 
 def giveaway_announcement(

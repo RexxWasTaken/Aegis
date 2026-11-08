@@ -314,37 +314,40 @@ class TicketManager:
         ticket: TicketRecord,
         channel: discord.TextChannel,
         actor: discord.Member,
-    ) -> None:
+    ) -> bytes:
         if not await self.is_staff(ticket, actor):
             raise TicketManagerError("Only ticket staff can delete a ticket.")
+        transcript = await self.transcript_bytes(channel)
+        await self.repository.save_ticket_transcript(
+            ticket_id=ticket.ticket_id,
+            transcript=transcript,
+        )
+        if ticket.status == "open":
+            ticket = await self.repository.set_ticket_status(
+                channel_id=ticket.channel_id,
+                status="closed",
+                closed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
         try:
             await channel.delete(reason=f"AEGIS ticket deleted by {actor.id}")
         except discord.NotFound:
             pass
         except discord.HTTPException as exc:
             raise TicketManagerError(
-                "The ticket channel could not be deleted. Its saved record was kept."
+                "The ticket channel could not be deleted. Its record and transcript were kept."
             ) from exc
-
-        closed_at = ticket.closed_at or datetime.now(timezone.utc).isoformat(
-            timespec="seconds"
-        )
-        if ticket.status == "open":
-            await self.repository.set_ticket_status(
-                channel_id=ticket.channel_id,
-                status="closed",
-                closed_at=closed_at,
-            )
         await self.log_event(
             ticket=ticket,
             actor=actor,
             event="Deleted",
             details=f"Ticket channel deleted by {actor.mention}.",
+            transcript=transcript,
         )
+        return transcript
 
     async def transcript_bytes(self, channel: discord.TextChannel) -> bytes:
         lines = [f"AEGIS ticket transcript for #{channel.name}"]
-        async for message in channel.history(limit=1000, oldest_first=True):
+        async for message in channel.history(limit=None, oldest_first=True):
             timestamp = message.created_at.astimezone(timezone.utc).isoformat(
                 timespec="seconds"
             )

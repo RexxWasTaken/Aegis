@@ -30,8 +30,8 @@ def _limited(value: str, limit: int) -> str:
 
 
 def _category_heading(category: str) -> str:
-    emoji_name = _CATEGORY_EMOJIS.get(category, "utility")
-    return f"{emoji_markup(emoji_name)} {category}"
+    emoji_name = _CATEGORY_EMOJIS.get(category)
+    return f"{emoji_markup(emoji_name)} {category}" if emoji_name else category
 
 
 def help_front_page(categories: Sequence[str]) -> discord.Embed:
@@ -44,11 +44,7 @@ def help_front_page(categories: Sequence[str]) -> discord.Embed:
         ),
         color=HELP_COLOR,
     )
-    category_lines = [
-        _category_heading(category)
-        for category in categories
-        if emoji_markup(_CATEGORY_EMOJIS.get(category, "utility"))
-    ]
+    category_lines = [_category_heading(category) for category in categories]
     if category_lines:
         embed.add_field(
             name="Categories",

@@ -230,7 +230,11 @@ class TicketDeleteConfirmView(discord.ui.View):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            await self.manager.delete(ticket=ticket, channel=channel, actor=actor)
+            transcript = await self.manager.delete(
+                ticket=ticket,
+                channel=channel,
+                actor=actor,
+            )
         except (TicketManagerError, ValueError, LookupError, discord.HTTPException) as exc:
             await interaction.followup.send(
                 f"{emoji_markup('error')} {exc}",
@@ -239,11 +243,26 @@ class TicketDeleteConfirmView(discord.ui.View):
             )
             return
         self.stop()
-        await interaction.followup.send(
-            f"{emoji_markup('success')} Ticket `#{ticket.ticket_id}` was deleted.",
-            ephemeral=True,
-            allowed_mentions=discord.AllowedMentions.none(),
+        success_message = (
+            f"{emoji_markup('success')} Ticket `#{ticket.ticket_id}` was deleted."
         )
+        try:
+            await interaction.followup.send(
+                success_message,
+                file=discord.File(
+                    io.BytesIO(transcript),
+                    filename=f"ticket-{ticket.ticket_id}-transcript.txt",
+                ),
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException:
+            await interaction.followup.send(
+                f"{success_message} The transcript is retained in the ticket database "
+                "and could not be attached to this response.",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
     @discord.ui.button(
         label="Cancel",
