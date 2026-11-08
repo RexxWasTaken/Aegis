@@ -30,3 +30,13 @@ def missing_permissions_embed(command_name: str) -> discord.Embed:
         description="You need the required permissions to execute this command.",
         color=ERROR_COLOR,
     )
+
+
+def operation_error_embed(message: str) -> discord.Embed:
+    """Build a concise error response without exposing internal exceptions."""
+    safe_message = discord.utils.escape_mentions(message)
+    return discord.Embed(
+        title=f"{emoji_markup('error')} Action failed",
+        description=safe_message,
+        color=ERROR_COLOR,
+    )

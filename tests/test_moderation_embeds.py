@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 import discord
 
@@ -78,6 +79,34 @@ class ModerationEmbedTests(unittest.TestCase):
         self.assertIn("Reason: Spamming", timeout.description)
         self.assertIn("Kicked", kick.title)
         self.assertIn("Successfully deleted 50 messages", purge.title)
+
+    def test_ban_and_unban_success_embeds_use_the_real_target_and_reason(self) -> None:
+        target = SimpleNamespace(id=123, mention="<@123>")
+        ban = success_embed("ban", target=target, reason="Reviewed")
+        unban = success_embed("unban", target=target, reason="Appeal accepted")
+        self.assertIn("<@123>", ban.title)
+        self.assertEqual(ban.description, "> Reason: Reviewed")
+        self.assertIn("<@123>", unban.title)
+        self.assertEqual(unban.description, "> Reason: Appeal accepted")
+
+    def test_tempban_embed_uses_the_parsed_duration(self) -> None:
+        target = SimpleNamespace(id=123, mention="<@123>")
+        embed = success_embed("tempban", target=target, reason="Spamming", duration="2 hours")
+        self.assertIn("<@123>", embed.title)
+        self.assertIn("> Duration: 2 hours", embed.description)
+        self.assertIn("> Reason: Spamming", embed.description)
+
+    def test_massban_preview_uses_actual_target_count(self) -> None:
+        confirmation = confirmation_embed("massban", count=3)
+        success = success_embed("massban", count=2, total=3)
+        self.assertEqual(confirmation.description, "You are about to ban 3 members.")
+        self.assertIn("Banned 2 of 3 members", success.title)
+
+    def test_masskick_preview_uses_actual_target_count(self) -> None:
+        confirmation = confirmation_embed("masskick", count=4)
+        success = success_embed("masskick", count=3, total=4)
+        self.assertEqual(confirmation.description, "You are about to kick 4 members.")
+        self.assertIn("Kicked 3 of 4 members", success.title)
 
     def test_custom_emoji_catalog_and_unknown_handling(self) -> None:
         self.assertEqual(len(EMOJI_IDS), 40)
