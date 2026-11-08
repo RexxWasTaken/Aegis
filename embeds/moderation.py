@@ -118,24 +118,55 @@ def _get_spec(command_name: str) -> CommandPreviewSpec:
         raise ValueError(f"Unknown moderation command: {command_name}") from exc
 
 
-def success_embed(command_name: str) -> discord.Embed:
+def success_embed(
+    command_name: str,
+    *,
+    target: discord.abc.User | None = None,
+    reason: str | None = None,
+    duration: str | None = None,
+    count: int | None = None,
+    total: int | None = None,
+) -> discord.Embed:
     """Build the designed success embed for one registered command."""
     spec = _get_spec(command_name)
+    title = spec.success_title
+    description = spec.success_description
+    if target is not None:
+        mention = target.mention
+        title = title.replace(SAMPLE_USER, mention).replace("Rexx", mention)
+    if reason is not None and description:
+        safe_reason = discord.utils.escape_mentions(reason)
+        if "> Reason: " in description:
+            description = description.rsplit("> Reason: ", 1)[0] + f"> Reason: {safe_reason}"
+        elif command_name in {"ban", "unban"}:
+            description = f"> Reason: {safe_reason}"
+    if duration is not None and "> Duration: " in description:
+        description = description.replace("> Duration: 1 day", f"> Duration: {duration}")
+    if count is not None and command_name in {"massban", "masskick"}:
+        if total is not None and count < total:
+            title = title.replace("5 members", f"{count} of {total} members")
+        else:
+            title = title.replace("5 members", f"{count} members")
     embed = discord.Embed(
-        title=f"{emoji_markup(spec.emoji_name)} {spec.success_title}",
-        description=spec.success_description or None,
+        title=f"{emoji_markup(spec.emoji_name)} {title}",
+        description=description or None,
         color=SUCCESS_COLOR,
     )
     return embed
 
 
-def confirmation_embed(command_name: str) -> discord.Embed:
+def confirmation_embed(command_name: str, *, count: int | None = None) -> discord.Embed:
     """Build a warning embed for an action that requires confirmation."""
     spec = _get_spec(command_name)
     if spec.confirmation_title is None or spec.confirmation_description is None:
         raise ValueError(f"{command_name} does not require a confirmation preview")
+    description = spec.confirmation_description
+    if count is not None and command_name == "massban":
+        description = f"You are about to ban {count} members."
+    elif count is not None and command_name == "masskick":
+        description = f"You are about to kick {count} members."
     return discord.Embed(
         title=f"{emoji_markup('warning')} {spec.confirmation_title}",
-        description=spec.confirmation_description,
+        description=description,
         color=WARNING_COLOR,
     )

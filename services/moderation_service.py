@@ -1,0 +1,353 @@
+"""Validated ban/unban operations and their persistent audit cases."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+import discord
+
+from core.permissions import (
+    ModerationPermissionError,
+    ModerationTargetError,
+    validate_ban_target,
+    validate_kick_target,
+    validate_unban_target,
+)
+from database.repositories.moderation import ModerationCase, ModerationRepository
+
+
+logger = logging.getLogger(__name__)
+
+
+class ModerationServiceError(RuntimeError):
+    """Base class for user-safe moderation service failures."""
+
+
+@dataclass(frozen=True)
+class BulkModerationResult:
+    attempted: int
+    completed_target_ids: tuple[int, ...]
+    failed_target_ids: tuple[int, ...]
+
+
+class AuditLogError(ModerationServiceError):
+    """The Discord action ran, but its final audit status could not be saved."""
+
+    def __init__(self, case_id: int, action_applied: bool) -> None:
+        self.case_id = case_id
+        self.action_applied = action_applied
+        if action_applied:
+            message = (
+                f"A Discord action was applied, but case #{case_id} could not be finalized "
+                "in the database. The case remains pending."
+            )
+        else:
+            message = f"The action failed and case #{case_id} could not be updated."
+        super().__init__(message)
+
+
+def normalize_reason(reason: str | None) -> str:
+    value = (reason or "").strip() or "No reason provided."
+    if len(value) > 450:
+        raise ModerationTargetError("The reason must be 450 characters or fewer.")
+    return value
+
+
+class ModerationService:
+    def __init__(self, repository: ModerationRepository) -> None:
+        self.repository = repository
+
+    async def _mark_failed(self, case_id: int) -> None:
+        try:
+            await self.repository.update_case_status(case_id, "failed")
+        except Exception:
+            logger.exception("Could not mark moderation case %s as failed.", case_id)
+
+    async def _mark_completed(self, case_id: int) -> None:
+        try:
+            await self.repository.update_case_status(case_id, "completed")
+        except Exception as exc:
+            raise AuditLogError(case_id, action_applied=True) from exc
+
+    async def _mark_partial(self, case_id: int) -> None:
+        try:
+            await self.repository.update_case_status(case_id, "partial")
+        except Exception as exc:
+            raise AuditLogError(case_id, action_applied=True) from exc
+
+    async def ban_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_ban_target(guild, target, moderator, bot_member)
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="ban",
+            reason=normalized_reason,
+        )
+        audit_reason = f"Case #{case.case_id}: {normalized_reason}"[:512]
+        try:
+            await target.ban(reason=audit_reason, delete_message_seconds=0)
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def kick_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_kick_target(guild, target, moderator, bot_member)
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="kick",
+            reason=normalized_reason,
+        )
+        audit_reason = f"Case #{case.case_id}: {normalized_reason}"[:512]
+        try:
+            await target.kick(reason=audit_reason)
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def massban_members(
+        self,
+        *,
+        guild: discord.Guild,
+        targets: list[discord.Member],
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+        max_targets: int = 10,
+    ) -> BulkModerationResult:
+        if not 2 <= len(targets) <= max_targets:
+            raise ModerationTargetError(
+                f"Massban must include between 2 and {max_targets} unique members."
+            )
+        target_ids = [target.id for target in targets]
+        if len(set(target_ids)) != len(target_ids):
+            raise ModerationTargetError("Massban targets must be unique.")
+        for target in targets:
+            validate_ban_target(guild, target, moderator, bot_member)
+
+        normalized_reason = normalize_reason(reason)
+        cases: list[ModerationCase] = []
+        try:
+            for target in targets:
+                cases.append(
+                    await self.repository.create_case(
+                        guild_id=guild.id,
+                        target_id=target.id,
+                        moderator_id=moderator.id,
+                        action_type="massban",
+                        reason=normalized_reason,
+                    )
+                )
+        except Exception:
+            for case in cases:
+                await self._mark_failed(case.case_id)
+            raise
+
+        completed: list[int] = []
+        failed: list[int] = []
+        for target, case in zip(targets, cases):
+            try:
+                await target.ban(
+                    reason=f"Case #{case.case_id}: {normalized_reason}"[:512],
+                    delete_message_seconds=0,
+                )
+            except Exception:
+                await self._mark_failed(case.case_id)
+                failed.append(target.id)
+            else:
+                await self._mark_completed(case.case_id)
+                completed.append(target.id)
+        return BulkModerationResult(
+            attempted=len(targets),
+            completed_target_ids=tuple(completed),
+            failed_target_ids=tuple(failed),
+        )
+
+    async def masskick_members(
+        self,
+        *,
+        guild: discord.Guild,
+        targets: list[discord.Member],
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+        max_targets: int = 10,
+    ) -> BulkModerationResult:
+        if not 2 <= len(targets) <= max_targets:
+            raise ModerationTargetError(
+                f"Masskick must include between 2 and {max_targets} unique members."
+            )
+        target_ids = [target.id for target in targets]
+        if len(set(target_ids)) != len(target_ids):
+            raise ModerationTargetError("Masskick targets must be unique.")
+        for target in targets:
+            validate_kick_target(guild, target, moderator, bot_member)
+
+        normalized_reason = normalize_reason(reason)
+        cases: list[ModerationCase] = []
+        try:
+            for target in targets:
+                cases.append(
+                    await self.repository.create_case(
+                        guild_id=guild.id,
+                        target_id=target.id,
+                        moderator_id=moderator.id,
+                        action_type="masskick",
+                        reason=normalized_reason,
+                    )
+                )
+        except Exception:
+            for case in cases:
+                await self._mark_failed(case.case_id)
+            raise
+
+        completed: list[int] = []
+        failed: list[int] = []
+        for target, case in zip(targets, cases):
+            try:
+                await target.kick(reason=f"Case #{case.case_id}: {normalized_reason}"[:512])
+            except Exception:
+                await self._mark_failed(case.case_id)
+                failed.append(target.id)
+            else:
+                await self._mark_completed(case.case_id)
+                completed.append(target.id)
+        return BulkModerationResult(
+            attempted=len(targets),
+            completed_target_ids=tuple(completed),
+            failed_target_ids=tuple(failed),
+        )
+
+    async def softban_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        """Ban for seven-day message cleanup, then unban; log partial failures."""
+        validate_ban_target(guild, target, moderator, bot_member)
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="softban",
+            reason=normalized_reason,
+        )
+        audit_reason = f"Case #{case.case_id}: {normalized_reason}"[:512]
+        try:
+            await target.ban(reason=audit_reason, delete_message_seconds=7 * 24 * 60 * 60)
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        try:
+            await guild.unban(
+                discord.Object(id=target.id),
+                reason=f"Softban completed for case #{case.case_id}",
+            )
+        except Exception as exc:
+            await self._mark_partial(case.case_id)
+            raise ModerationServiceError(
+                f"Softban case #{case.case_id} applied the ban, but automatic unban failed."
+            ) from exc
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def tempban_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        duration: timedelta,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        """Ban a member until a persisted expiry time."""
+        validate_ban_target(guild, target, moderator, bot_member)
+        if duration.total_seconds() <= 0 or duration.total_seconds() > 365 * 24 * 60 * 60:
+            raise ModerationTargetError("The duration must be between 1 second and 365 days.")
+        normalized_reason = normalize_reason(reason)
+        expires_at = (datetime.now(timezone.utc) + duration).isoformat(timespec="seconds")
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="tempban",
+            reason=normalized_reason,
+            expires_at=expires_at,
+        )
+        audit_reason = f"Case #{case.case_id}: {normalized_reason}"[:512]
+        try:
+            await target.ban(reason=audit_reason, delete_message_seconds=0)
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def unban_user(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.User,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_unban_target(guild, target.id, moderator, bot_member)
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="unban",
+            reason=normalized_reason,
+        )
+        audit_reason = f"Case #{case.case_id}: {normalized_reason}"[:512]
+        try:
+            await guild.unban(discord.Object(id=target.id), reason=audit_reason)
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+
+__all__ = [
+    "AuditLogError",
+    "ModerationPermissionError",
+    "ModerationService",
+    "ModerationServiceError",
+    "ModerationTargetError",
+    "normalize_reason",
+]
