@@ -23,13 +23,7 @@ MODERATION_COMMANDS = {
 }
 COMMUNITY_COMMANDS = {
     "help",
-    "ticketsetup",
-    "ticketpanel",
-    "ticketclose",
-    "ticketreopen",
-    "ticketadd",
-    "ticketremove",
-    "tickettranscript",
+    "ticket",
     "giveaway",
 }
 EXPECTED_COMMANDS = MODERATION_COMMANDS | COMMUNITY_COMMANDS
@@ -59,6 +53,16 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(bot.get_command("ban").qualified_name, "ban")
             self.assertEqual(bot.get_command("unban").qualified_name, "unban")
             for command_name in (
+                "ticket panel",
+                "ticket setup",
+                "ticket close",
+                "ticket reopen",
+                "ticket claim",
+                "ticket delete",
+                "ticket add",
+                "ticket remove",
+                "ticket transcript",
+                "ticket info",
                 "giveaway start",
                 "giveaway end",
                 "giveaway reroll",
@@ -82,16 +86,16 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Giveaway", discovered[mode])
             self.assertTrue(
                 any(
-                    name.startswith("a!ticket")
+                    entry.usage.startswith("a!ticket")
                     for entries in discovered["prefix"].values()
-                    for name in (entry.usage for entry in entries)
+                    for entry in entries
                 )
             )
             self.assertTrue(
                 any(
-                    name.startswith("/giveaway")
+                    entry.usage.startswith("/giveaway")
                     for entries in discovered["slash"].values()
-                    for name in (entry.usage for entry in entries)
+                    for entry in entries
                 )
             )
         finally:

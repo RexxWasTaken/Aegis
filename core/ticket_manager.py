@@ -140,6 +140,9 @@ class TicketManager:
             or any(role.id == config.staff_role_id for role in member.roles)
         )
 
+    async def can_access(self, ticket: TicketRecord, member: discord.Member) -> bool:
+        return member.id == ticket.creator_id or await self.is_staff(ticket, member)
+
     async def claim(self, ticket: TicketRecord, staff: discord.Member) -> TicketRecord:
         if not await self.is_staff(ticket, staff):
             raise TicketManagerError("Only ticket staff can claim this ticket.")
@@ -228,11 +231,16 @@ class TicketManager:
             overwrite.view_channel = True
             overwrite.send_messages = True
             overwrite.read_message_history = True
-            await channel.set_permissions(
-                creator,
-                overwrite=overwrite,
-                reason=f"AEGIS ticket reopened by {actor.id}",
-            )
+            try:
+                await channel.set_permissions(
+                    creator,
+                    overwrite=overwrite,
+                    reason=f"AEGIS ticket reopened by {actor.id}",
+                )
+            except discord.HTTPException as exc:
+                raise TicketManagerError(
+                    "The ticket channel permissions could not be updated; it remains closed."
+                ) from exc
         updated = await self.repository.set_ticket_status(
             channel_id=ticket.channel_id, status="open", closed_at=None
         )
@@ -298,6 +306,40 @@ class TicketManager:
             actor=actor,
             event="Member removed",
             details=f"Removed {member.mention} from the ticket.",
+        )
+
+    async def delete(
+        self,
+        *,
+        ticket: TicketRecord,
+        channel: discord.TextChannel,
+        actor: discord.Member,
+    ) -> None:
+        if not await self.is_staff(ticket, actor):
+            raise TicketManagerError("Only ticket staff can delete a ticket.")
+        try:
+            await channel.delete(reason=f"AEGIS ticket deleted by {actor.id}")
+        except discord.NotFound:
+            pass
+        except discord.HTTPException as exc:
+            raise TicketManagerError(
+                "The ticket channel could not be deleted. Its saved record was kept."
+            ) from exc
+
+        closed_at = ticket.closed_at or datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        if ticket.status == "open":
+            await self.repository.set_ticket_status(
+                channel_id=ticket.channel_id,
+                status="closed",
+                closed_at=closed_at,
+            )
+        await self.log_event(
+            ticket=ticket,
+            actor=actor,
+            event="Deleted",
+            details=f"Ticket channel deleted by {actor.mention}.",
         )
 
     async def transcript_bytes(self, channel: discord.TextChannel) -> bytes:

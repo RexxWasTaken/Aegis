@@ -39,12 +39,13 @@ class CommunityUiTests(unittest.IsolatedAsyncioTestCase):
         )
 
         panel = ticket_panel_embed()
+        self.assertIsNone(panel.title)
         self.assertEqual(
-            panel.title,
-            "<:ticket:1518658831360589875> AEGIS SUPPORT CENTER",
+            panel.description,
+            "Make Ticket For Complains Here\n\n"
+            "To create a ticket, select an issue from the dropdown below.\n\n"
+            f"{emoji_markup('ticket')} AEGIS Support",
         )
-        self.assertIn("Make a Ticket Here", panel.description)
-        self.assertIn("What's The Issue?", panel.footer.text)
 
     def test_giveaway_embed_uses_custom_reaction_and_never_unicode_confetti(self) -> None:
         host = SimpleNamespace(id=10, mention="<@10>")
