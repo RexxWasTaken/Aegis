@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +39,22 @@ class WarningStats:
     total_warnings: int
     members_warned: int
     moderators_with_warnings: int
+
+
+@dataclass(frozen=True)
+class ChannelLockState:
+    guild_id: int
+    channel_id: int
+    target_id: int
+    previous_send_messages: bool | None
+
+
+@dataclass(frozen=True)
+class JailRoleSnapshot:
+    guild_id: int
+    member_id: int
+    jail_role_id: int
+    previous_role_ids: tuple[int, ...]
 
 
 class ModerationRepository:
@@ -84,6 +101,29 @@ class ModerationRepository:
                 )
                 """
             )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS moderation_channel_locks (
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    previous_send_messages INTEGER,
+                    PRIMARY KEY (guild_id, channel_id, target_id)
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS moderation_jail_roles (
+                    guild_id INTEGER NOT NULL,
+                    member_id INTEGER NOT NULL,
+                    jail_role_id INTEGER NOT NULL,
+                    previous_role_ids TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, member_id)
+                )
+                """
+            )
             cursor = await self._db.execute("PRAGMA table_info(moderation_cases)")
             columns = {row["name"] for row in await cursor.fetchall()}
             if "status" not in columns:
@@ -110,7 +150,7 @@ class ModerationRepository:
                 WHERE action_type = 'tempban' AND status = 'expiry_pending'
                 """
             )
-            await self._db.execute("PRAGMA user_version = 2")
+            await self._db.execute("PRAGMA user_version = 3")
             await self._db.commit()
 
     def _connection(self) -> aiosqlite.Connection:
@@ -207,6 +247,22 @@ class ModerationRepository:
             )
             rows = await cursor.fetchall()
         return [ModerationWarning(**dict(row)) for row in rows]
+
+    async def get_warning(
+        self, *, guild_id: int, warning_id: int
+    ) -> ModerationWarning | None:
+        """Retrieve one warning without allowing cross-guild ID lookups."""
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT warning_id, guild_id, target_id, moderator_id, reason, created_at
+                FROM moderation_warnings
+                WHERE warning_id = ? AND guild_id = ?
+                """,
+                (warning_id, guild_id),
+            )
+            row = await cursor.fetchone()
+        return ModerationWarning(**dict(row)) if row is not None else None
 
     async def list_warning_page(
         self,
@@ -305,6 +361,125 @@ class ModerationRepository:
             )
             await self._connection().commit()
         return cursor.rowcount
+
+    async def save_channel_lock_state(
+        self,
+        *,
+        guild_id: int,
+        channel_id: int,
+        target_id: int,
+        previous_send_messages: bool | None,
+    ) -> bool:
+        """Save the first pre-lock value; repeated locks never replace it."""
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                INSERT OR IGNORE INTO moderation_channel_locks
+                    (guild_id, channel_id, target_id, previous_send_messages)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    guild_id,
+                    channel_id,
+                    target_id,
+                    None if previous_send_messages is None else int(previous_send_messages),
+                ),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def get_channel_lock_state(
+        self, *, guild_id: int, channel_id: int, target_id: int
+    ) -> ChannelLockState | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT guild_id, channel_id, target_id, previous_send_messages
+                FROM moderation_channel_locks
+                WHERE guild_id = ? AND channel_id = ? AND target_id = ?
+                """,
+                (guild_id, channel_id, target_id),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        values = dict(row)
+        if values["previous_send_messages"] is not None:
+            values["previous_send_messages"] = bool(values["previous_send_messages"])
+        return ChannelLockState(**values)
+
+    async def delete_channel_lock_state(
+        self, *, guild_id: int, channel_id: int, target_id: int
+    ) -> bool:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                DELETE FROM moderation_channel_locks
+                WHERE guild_id = ? AND channel_id = ? AND target_id = ?
+                """,
+                (guild_id, channel_id, target_id),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def save_jail_snapshot(
+        self,
+        *,
+        guild_id: int,
+        member_id: int,
+        jail_role_id: int,
+        previous_role_ids: list[int] | tuple[int, ...],
+    ) -> bool:
+        """Persist the original roles once, before changing the member."""
+        role_ids = sorted({int(role_id) for role_id in previous_role_ids})
+        if any(role_id <= 0 for role_id in role_ids):
+            raise ValueError("Role IDs must be positive integers.")
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                INSERT OR IGNORE INTO moderation_jail_roles
+                    (guild_id, member_id, jail_role_id, previous_role_ids, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (guild_id, member_id, jail_role_id, json.dumps(role_ids), created_at),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def get_jail_snapshot(
+        self, *, guild_id: int, member_id: int
+    ) -> JailRoleSnapshot | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT guild_id, member_id, jail_role_id, previous_role_ids
+                FROM moderation_jail_roles
+                WHERE guild_id = ? AND member_id = ?
+                """,
+                (guild_id, member_id),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        values = dict(row)
+        try:
+            role_ids = tuple(int(role_id) for role_id in json.loads(values.pop("previous_role_ids")))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("The saved jail-role snapshot is invalid.") from exc
+        return JailRoleSnapshot(**values, previous_role_ids=role_ids)
+
+    async def delete_jail_snapshot(self, *, guild_id: int, member_id: int) -> bool:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                DELETE FROM moderation_jail_roles
+                WHERE guild_id = ? AND member_id = ?
+                """,
+                (guild_id, member_id),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
 
     async def update_case_status(self, case_id: int, status: str) -> None:
         if status not in {

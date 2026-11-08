@@ -11,6 +11,8 @@ import discord
 from core.permissions import (
     ModerationPermissionError,
     ModerationTargetError,
+    validate_nickname_target,
+    validate_role_management_target,
     validate_ban_target,
     validate_kick_target,
     validate_timeout_target,
@@ -567,6 +569,26 @@ class ModerationService:
             limit=limit,
             offset=offset,
         )
+
+    async def warning_by_id(
+        self,
+        *,
+        guild: discord.Guild,
+        moderator: discord.Member,
+        warning_id: int,
+    ) -> ModerationWarning:
+        """Look up one warning, scoped to the current guild."""
+        validate_warning_moderator(guild, moderator)
+        if not isinstance(warning_id, int) or warning_id <= 0:
+            raise ModerationTargetError("Provide a valid warning ID.")
+        warning = await self.repository.get_warning(
+            guild_id=guild.id, warning_id=warning_id
+        )
+        if warning is None:
+            raise ModerationTargetError(
+                f"Warning #{warning_id} was not found in this server."
+            )
+        return warning
 
     async def warning_statistics(
         self, *, guild: discord.Guild, moderator: discord.Member

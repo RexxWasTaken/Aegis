@@ -48,10 +48,88 @@ EMOJI_IDS: Final[dict[str, str]] = {
     "ai": "1518658842177699851",
 }
 
+UNICODE_FALLBACKS: Final[dict[str, str]] = {
+    "success": "✅",
+    "error": "❌",
+    "wrong": "⚠️",
+    "warning": "⚠️",
+    "information": "ℹ️",
+    "info": "ℹ️",
+    "loading": "⏳",
+    "ban": "🔨",
+    "kick": "👢",
+    "timeout": "⏱️",
+    "mute": "🔇",
+    "unmute": "🔊",
+    "warn": "⚠️",
+    "moderation": "🛡️",
+    "purge": "🧹",
+    "delete": "🗑️",
+    "lock": "🔒",
+    "unlock": "🔓",
+    "slowmode": "🐢",
+    "jail": "🚧",
+    "unjail": "🔓",
+    "user": "👤",
+    "moderator": "🛡️",
+    "channel": "💬",
+    "role": "🎭",
+    "database": "🗄️",
+    "permissions": "🔑",
+    "confirmation": "❔",
+    "pagination": "↔️",
+    "voice": "🔊",
+    "arrow": "➡️",
+    "security": "🛡️",
+    "antinuke": "🧯",
+    "folder": "📁",
+    "home": "🏠",
+    "config": "⚙️",
+    "owner": "👑",
+    "developer": "🧑‍💻",
+    "economy": "💰",
+    "media": "🖼️",
+    "fun": "🎉",
+    "ticket": "🎫",
+    "welcomer": "👋",
+    "dnd": "⛔",
+    "idle": "🌙",
+    "offline": "⚫",
+    "online": "🟢",
+    "favorite": "⭐",
+    "queue": "📋",
+    "shuffle": "🔀",
+    "volume": "🔊",
+    "previous": "⏮️",
+    "next": "⏭️",
+    "pause": "⏸️",
+    "repeat": "🔁",
+    "stop": "⏹️",
+    "play": "▶️",
+    "larrow": "⬅️",
+    "giveaway": "🎁",
+    "music": "🎵",
+    "utility": "🧰",
+    "ai": "🤖",
+}
+
 
 def emoji_markup(name: str) -> str:
-    """Return Discord's custom emoji markup, or an empty string if unknown."""
+    """Return the configured Discord markup for compatibility with old callers."""
     emoji_id = EMOJI_IDS.get(name)
     if emoji_id is None:
         return ""
     return f"<:{name}:{emoji_id}>"
+
+
+def emoji_for(name: str, guild: object | None = None) -> str:
+    """Use a known available server emoji, otherwise a stable Unicode fallback."""
+    emoji_id = EMOJI_IDS.get(name)
+    if guild is not None and emoji_id is not None:
+        try:
+            emoji = guild.get_emoji(int(emoji_id))
+        except (AttributeError, TypeError, ValueError):
+            emoji = None
+        if emoji is not None and bool(getattr(emoji, "available", True)):
+            return str(emoji)
+    return UNICODE_FALLBACKS.get(name, UNICODE_FALLBACKS["information"])

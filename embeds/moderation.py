@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import discord
 
-from core.emoji_manager import emoji_markup
+from core.emoji_manager import emoji_for
 from database.repositories.moderation import ModerationWarning, WarningStats
 
 
@@ -16,7 +16,11 @@ WARNING_COLOR = discord.Color(0xF1C40F)
 ERROR_COLOR = discord.Color(0xE74C3C)
 SAMPLE_USER = "<@111111111111111111>"
 VOICE_COMMANDS = {"voicemute", "voiceunmute", "deafen", "undeafen", "disconnect", "move"}
-PURGE_COMMANDS = {"purge", "purgeuser", "purgebots", "purgehumans", "purgelinks"}
+PURGE_COMMANDS = {
+    "purge", "purgeuser", "purgebots", "purgehumans", "purgelinks",
+    "purgeinvites", "purgeimages", "purgefiles", "purgeembeds",
+    "purgementions", "purgecontains", "purgeafter",
+}
 
 
 @dataclass(frozen=True)
@@ -133,6 +137,13 @@ def success_embed(
     warning_id: int | None = None,
     source_channel: discord.abc.GuildChannel | None = None,
     destination_channel: discord.abc.GuildChannel | None = None,
+    channel: discord.abc.GuildChannel | None = None,
+    nickname: str | None = None,
+    seconds: int | None = None,
+    restored_count: int | None = None,
+    skipped_count: int = 0,
+    match_text: str | None = None,
+    guild: discord.Guild | None = None,
 ) -> discord.Embed:
     """Build the designed success embed for one registered command."""
     spec = _get_spec(command_name)
@@ -169,6 +180,21 @@ def success_embed(
             title = f"Deleted {count} bot messages"
         elif command_name == "purgehumans":
             title = f"Deleted {count} human messages"
+        elif command_name == "purgeinvites":
+            title = f"Deleted {count} messages containing Discord invites"
+        elif command_name == "purgeimages":
+            title = f"Deleted {count} messages containing images"
+        elif command_name == "purgefiles":
+            title = f"Deleted {count} messages containing files"
+        elif command_name == "purgeembeds":
+            title = f"Deleted {count} messages containing embeds"
+        elif command_name == "purgementions":
+            title = f"Deleted {count} messages containing mentions"
+        elif command_name == "purgecontains":
+            label = discord.utils.escape_mentions(match_text or "the selected text")
+            title = f"Deleted {count} messages containing “{label}”"
+        elif command_name == "purgeafter":
+            title = f"Deleted {count} messages after the selected message"
         else:
             title = f"Deleted {count} messages containing links"
     if command_name == "unwarn" and warning_id is not None:
@@ -185,11 +211,35 @@ def success_embed(
         description = f"> From: {from_label}\n> To: {to_label}"
         if reason is not None:
             description += f"\n> Reason: {discord.utils.escape_mentions(reason)}"
+    if command_name in {"lock", "unlock"} and channel is not None:
+        verb = "Locked" if command_name == "lock" else "Unlocked"
+        title = f"{verb} {channel.mention}"
+    elif command_name in {"lockall", "unlockall"} and count is not None:
+        verb = "Locked" if command_name == "lockall" else "Unlocked"
+        title = f"{verb} {count} text channels"
+        if skipped_count:
+            description = f"> Skipped: {skipped_count} channel(s)"
+    elif command_name == "slowmode" and channel is not None and seconds is not None:
+        setting = "disabled" if seconds == 0 else f"set to {seconds} second(s)"
+        title = f"Slowmode {setting} in {channel.mention}"
+    elif command_name == "nick" and target is not None:
+        title = f"Changed {target.mention}'s nickname"
+        description = f"> New nickname: {discord.utils.escape_mentions(nickname or '')}"
+    elif command_name == "resetnick" and target is not None:
+        title = f"Reset {target.mention}'s nickname"
+        description = "> Display name restored"
+    elif command_name == "jail" and target is not None:
+        title = f"Jailed {target.mention}"
+    elif command_name == "unjail" and target is not None:
+        title = f"Unjailed {target.mention}"
+        description = f"> Previous roles restored: {restored_count or 0}"
+        if skipped_count:
+            description += f"\n> Roles skipped: {skipped_count}"
     embed = discord.Embed(
         title=(
-            f"{emoji_markup(spec.emoji_name)} {emoji_markup('voice')} {title}"
+            f"{emoji_for(spec.emoji_name, guild)} {emoji_for('voice', guild)} {title}"
             if command_name in VOICE_COMMANDS
-            else f"{emoji_markup(spec.emoji_name)} {title}"
+            else f"{emoji_for(spec.emoji_name, guild)} {title}"
         ),
         description=description or None,
         color=SUCCESS_COLOR,
@@ -202,6 +252,8 @@ def confirmation_embed(
     *,
     count: int | None = None,
     target: discord.abc.User | None = None,
+    guild: discord.Guild | None = None,
+    match_text: str | None = None,
 ) -> discord.Embed:
     """Build a warning embed for an action that requires confirmation."""
     spec = _get_spec(command_name)
@@ -227,12 +279,34 @@ def confirmation_embed(
             description = f"You are about to delete {count} human messages."
         elif command_name == "purgelinks":
             description = f"You are about to delete {count} messages containing links."
+        elif command_name == "purgeinvites":
+            description = f"You are about to delete {count} messages containing Discord invites."
+        elif command_name == "purgeimages":
+            description = f"You are about to delete {count} messages containing images."
+        elif command_name == "purgefiles":
+            description = f"You are about to delete {count} messages containing files."
+        elif command_name == "purgeembeds":
+            description = f"You are about to delete {count} messages containing embeds."
+        elif command_name == "purgementions":
+            description = f"You are about to delete {count} messages containing mentions."
+        elif command_name == "purgeafter":
+            description = f"You are about to delete {count} messages after the selected message."
+        elif command_name == "purgecontains":
+            label = discord.utils.escape_mentions(match_text or "the selected text")
+            description = (
+                f"You are about to delete {count} messages containing "
+                f"“{label[:120]}”."
+            )
+        elif command_name == "lockall":
+            description = f"You are about to lock {count} text channels."
+        elif command_name == "unlockall":
+            description = f"You are about to restore send permissions in {count} text channels."
         else:
             description = f"You are about to delete {count} matching messages."
     if target is not None:
         description = description.replace(SAMPLE_USER, target.mention)
     return discord.Embed(
-        title=f"{emoji_markup('warning')} {spec.confirmation_title}",
+        title=f"{emoji_for('warning', guild)} {spec.confirmation_title}",
         description=description,
         color=WARNING_COLOR,
     )
@@ -243,6 +317,7 @@ def warning_history_embeds(
     warnings: list[ModerationWarning],
     *,
     page_size: int = 8,
+    guild: discord.Guild | None = None,
 ) -> list[discord.Embed]:
     """Build bounded, themed pages containing the target's complete warning history."""
     if page_size < 1 or page_size > 10:
@@ -259,7 +334,7 @@ def warning_history_embeds(
         if not warnings:
             description += "\n\nNo active warnings."
         embed = discord.Embed(
-            title=f"{emoji_markup('moderation')} {title}",
+            title=f"{emoji_for('moderation', guild)} {title}",
             description=description,
             color=SUCCESS_COLOR,
         )
@@ -285,6 +360,7 @@ def warning_list_embed(
     page: int,
     page_size: int,
     target: discord.abc.User | None = None,
+    guild: discord.Guild | None = None,
 ) -> discord.Embed:
     """Build one bounded server or member warning-list page."""
     page_count = max(1, (total + page_size - 1) // page_size)
@@ -295,7 +371,7 @@ def warning_list_embed(
     if not warnings:
         description += "\n\nNo warnings found."
     embed = discord.Embed(
-        title=f"{emoji_markup('moderation')} Warning list{target_label}",
+        title=f"{emoji_for('moderation', guild)} Warning list{target_label}",
         description=description,
         color=SUCCESS_COLOR,
     )
@@ -317,10 +393,12 @@ def warning_list_embed(
     return embed
 
 
-def warning_stats_embed(stats: WarningStats) -> discord.Embed:
+def warning_stats_embed(
+    stats: WarningStats, *, guild: discord.Guild | None = None
+) -> discord.Embed:
     """Build warning statistics from the repository's stored totals."""
     return discord.Embed(
-        title=f"{emoji_markup('moderation')} Warning statistics",
+        title=f"{emoji_for('moderation', guild)} Warning statistics",
         description=(
             f"> Total warnings: {stats.total_warnings}\n"
             f"> Members warned: {stats.members_warned}\n"
@@ -328,3 +406,30 @@ def warning_stats_embed(stats: WarningStats) -> discord.Embed:
         ),
         color=SUCCESS_COLOR,
     )
+
+
+def warning_info_embed(
+    warning: ModerationWarning, *, guild: discord.Guild | None = None
+) -> discord.Embed:
+    """Build the complete details view for one guild-scoped warning."""
+    created_at = datetime.fromisoformat(warning.created_at)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    timestamp = int(created_at.timestamp())
+    embed = discord.Embed(
+        title=f"{emoji_for('information', guild)} Warning #{warning.warning_id}",
+        color=WARNING_COLOR,
+    )
+    embed.add_field(name="Target user", value=f"<@{warning.target_id}>", inline=True)
+    embed.add_field(name="Moderator", value=f"<@{warning.moderator_id}>", inline=True)
+    embed.add_field(
+        name="Timestamp",
+        value=f"<t:{timestamp}:F> (<t:{timestamp}:R>)",
+        inline=False,
+    )
+    embed.add_field(
+        name="Reason",
+        value=discord.utils.escape_mentions(warning.reason) or "No reason provided.",
+        inline=False,
+    )
+    return embed
