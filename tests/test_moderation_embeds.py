@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import discord
 
 from core.emoji_manager import EMOJI_IDS, emoji_markup
-from database.repositories.moderation import ModerationWarning
+from database.repositories.moderation import ModerationWarning, WarningStats
 from embeds.moderation import (
     COMMAND_SPECS,
     ERROR_COLOR,
@@ -15,6 +15,8 @@ from embeds.moderation import (
     confirmation_embed,
     success_embed,
     warning_history_embeds,
+    warning_list_embed,
+    warning_stats_embed,
 )
 from embeds.moderation_errors import missing_permissions_embed, wrong_usage_embed
 
@@ -158,6 +160,52 @@ class ModerationEmbedTests(unittest.TestCase):
         self.assertEqual(len(pages[1].fields), 1)
         self.assertIn("Warning #9", pages[0].fields[0].name)
         self.assertNotIn("@here", pages[0].fields[0].value)
+
+    def test_warnlist_warnstats_and_purge_embeds_use_actual_results(self) -> None:
+        target = SimpleNamespace(id=123, mention="<@123>")
+        warning = ModerationWarning(
+            warning_id=104,
+            guild_id=1,
+            target_id=123,
+            moderator_id=50,
+            reason="@everyone repeated spam",
+            created_at="2026-01-01T00:00:00+00:00",
+        )
+        warning_page = warning_list_embed(
+            [warning], total=9, page=2, page_size=8, target=target
+        )
+        self.assertIn("Warning list for <@123>", warning_page.title)
+        self.assertIn("Page: 2 of 2", warning_page.description)
+        self.assertIn("<@50>", warning_page.fields[0].value)
+        self.assertNotIn("@everyone", warning_page.fields[0].value)
+
+        stats = warning_stats_embed(
+            WarningStats(
+                total_warnings=12,
+                members_warned=8,
+                moderators_with_warnings=3,
+            )
+        )
+        self.assertIn("Total warnings: 12", stats.description)
+        self.assertIn("Members warned: 8", stats.description)
+        self.assertIn("Moderators with warnings: 3", stats.description)
+
+        self.assertEqual(
+            success_embed("purge", count=7).title,
+            f"{emoji_markup('delete')} Successfully deleted 7 messages",
+        )
+        self.assertIn("<@123>", success_embed("purgeuser", count=5, target=target).title)
+        self.assertIn("Deleted 2 bot messages", success_embed("purgebots", count=2).title)
+        self.assertIn("Deleted 3 human messages", success_embed("purgehumans", count=3).title)
+        self.assertIn("Deleted 4 messages containing links", success_embed("purgelinks", count=4).title)
+        self.assertIn(
+            "5 messages from <@123>",
+            confirmation_embed("purgeuser", count=5, target=target).description,
+        )
+        self.assertIn(
+            "4 messages containing links",
+            confirmation_embed("purgelinks", count=4).description,
+        )
 
     def test_custom_emoji_catalog_and_unknown_handling(self) -> None:
         self.assertEqual(len(EMOJI_IDS), 40)

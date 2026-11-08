@@ -176,9 +176,8 @@ def validate_warning_target(
     moderator: object,
 ) -> None:
     """Validate a warning target and the moderator's Manage Messages permission."""
+    validate_warning_moderator(guild, moderator)
     _require_same_guild(guild, target, "target")
-    _require_same_guild(guild, moderator, "moderator")
-    _require_moderator(guild, moderator, "manage_messages")
     if getattr(target, "bot", False):
         raise ModerationTargetError("Bot accounts cannot receive warnings.")
     if getattr(target, "id", None) == getattr(moderator, "id", None):
@@ -190,6 +189,12 @@ def validate_warning_target(
             raise ModerationTargetError(
                 "You cannot warn a member with an equal or higher role."
             )
+
+
+def validate_warning_moderator(guild: object, moderator: object) -> None:
+    """Validate guild membership and warning-management permission."""
+    _require_same_guild(guild, moderator, "moderator")
+    _require_moderator(guild, moderator, "manage_messages")
 
 
 def validate_unban_target(

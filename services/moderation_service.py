@@ -16,12 +16,14 @@ from core.permissions import (
     validate_timeout_target,
     validate_unban_target,
     validate_voice_target,
+    validate_warning_moderator,
     validate_warning_target,
 )
 from database.repositories.moderation import (
     ModerationCase,
     ModerationRepository,
     ModerationWarning,
+    WarningStats,
 )
 
 
@@ -545,6 +547,32 @@ class ModerationService:
         return await self.repository.list_warnings(
             guild_id=guild.id, target_id=target.id
         )
+
+    async def warning_page(
+        self,
+        *,
+        guild: discord.Guild,
+        moderator: discord.Member,
+        target: discord.Member | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[ModerationWarning], int]:
+        if target is None:
+            validate_warning_moderator(guild, moderator)
+        else:
+            validate_warning_target(guild, target, moderator)
+        return await self.repository.list_warning_page(
+            guild_id=guild.id,
+            target_id=target.id if target is not None else None,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def warning_statistics(
+        self, *, guild: discord.Guild, moderator: discord.Member
+    ) -> WarningStats:
+        validate_warning_moderator(guild, moderator)
+        return await self.repository.get_warning_stats(guild_id=guild.id)
 
     async def remove_warning(
         self,

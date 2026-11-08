@@ -133,6 +133,48 @@ class ModerationDatabaseTests(unittest.IsolatedAsyncioTestCase):
             [other_target.warning_id],
         )
 
+    async def test_warning_pages_and_statistics_use_guild_scoped_records(self) -> None:
+        await self.repository.initialize()
+        first = await self.repository.create_warning(
+            guild_id=1, target_id=2, moderator_id=3, reason="one"
+        )
+        second = await self.repository.create_warning(
+            guild_id=1, target_id=4, moderator_id=3, reason="two"
+        )
+        third = await self.repository.create_warning(
+            guild_id=1, target_id=2, moderator_id=5, reason="three"
+        )
+        await self.repository.create_warning(
+            guild_id=2, target_id=2, moderator_id=6, reason="foreign"
+        )
+
+        page_one, total = await self.repository.list_warning_page(
+            guild_id=1, limit=2, offset=0
+        )
+        page_two, page_two_total = await self.repository.list_warning_page(
+            guild_id=1, limit=2, offset=2
+        )
+        self.assertEqual(total, 3)
+        self.assertEqual(page_two_total, total)
+        self.assertEqual(
+            [item.warning_id for item in page_one],
+            [third.warning_id, second.warning_id],
+        )
+        self.assertEqual([item.warning_id for item in page_two], [first.warning_id])
+
+        member_page, member_total = await self.repository.list_warning_page(
+            guild_id=1, target_id=2, limit=10, offset=0
+        )
+        self.assertEqual(member_total, 2)
+        self.assertEqual(
+            {item.target_id for item in member_page},
+            {2},
+        )
+        stats = await self.repository.get_warning_stats(guild_id=1)
+        self.assertEqual(stats.total_warnings, 3)
+        self.assertEqual(stats.members_warned, 2)
+        self.assertEqual(stats.moderators_with_warnings, 2)
+
     async def test_expired_tempban_is_claimed_once_for_expiry(self) -> None:
         from datetime import datetime, timezone
 

@@ -33,6 +33,13 @@ class ModerationWarning:
     created_at: str
 
 
+@dataclass(frozen=True)
+class WarningStats:
+    total_warnings: int
+    members_warned: int
+    moderators_with_warnings: int
+
+
 class ModerationRepository:
     """Stores moderation audit cases without resetting existing database data."""
 
@@ -200,6 +207,62 @@ class ModerationRepository:
             )
             rows = await cursor.fetchall()
         return [ModerationWarning(**dict(row)) for row in rows]
+
+    async def list_warning_page(
+        self,
+        *,
+        guild_id: int,
+        limit: int,
+        offset: int,
+        target_id: int | None = None,
+    ) -> tuple[list[ModerationWarning], int]:
+        """Return one bounded warning page and its total, scoped to a guild."""
+        if not 1 <= limit <= 25 or offset < 0:
+            raise ValueError("Warning page bounds are invalid.")
+        where = "guild_id = ?"
+        parameters: list[int] = [guild_id]
+        if target_id is not None:
+            where += " AND target_id = ?"
+            parameters.append(target_id)
+        async with self._lock:
+            db = self._connection()
+            count_cursor = await db.execute(
+                f"SELECT COUNT(*) AS total FROM moderation_warnings WHERE {where}",
+                parameters,
+            )
+            total = int((await count_cursor.fetchone())["total"])
+            cursor = await db.execute(
+                f"""
+                SELECT warning_id, guild_id, target_id, moderator_id, reason, created_at
+                FROM moderation_warnings
+                WHERE {where}
+                ORDER BY warning_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                [*parameters, limit, offset],
+            )
+            rows = await cursor.fetchall()
+        return [ModerationWarning(**dict(row)) for row in rows], total
+
+    async def get_warning_stats(self, *, guild_id: int) -> WarningStats:
+        """Aggregate warning statistics from active records in one guild."""
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT COUNT(*) AS total_warnings,
+                       COUNT(DISTINCT target_id) AS members_warned,
+                       COUNT(DISTINCT moderator_id) AS moderators_with_warnings
+                FROM moderation_warnings
+                WHERE guild_id = ?
+                """,
+                (guild_id,),
+            )
+            row = await cursor.fetchone()
+        return WarningStats(
+            total_warnings=int(row["total_warnings"]),
+            members_warned=int(row["members_warned"]),
+            moderators_with_warnings=int(row["moderators_with_warnings"]),
+        )
 
     async def delete_warning(
         self, *, guild_id: int, target_id: int, warning_id: int
