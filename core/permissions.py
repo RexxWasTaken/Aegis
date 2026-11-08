@@ -197,6 +197,63 @@ def validate_warning_moderator(guild: object, moderator: object) -> None:
     _require_moderator(guild, moderator, "manage_messages")
 
 
+def validate_nickname_target(
+    guild: object,
+    target: object,
+    moderator: object,
+    bot_member: object,
+) -> None:
+    """Validate nickname-management permission, membership, and hierarchy."""
+    _require_same_guild(guild, target, "target")
+    _require_same_guild(guild, moderator, "moderator")
+    _require_same_guild(guild, bot_member, "bot")
+    _require_moderator(guild, moderator, "manage_nicknames")
+    _require_bot_permission(bot_member, "manage_nicknames")
+    if getattr(target, "id", None) == getattr(guild, "owner_id", None):
+        raise ModerationTargetError("The server owner cannot have their nickname changed.")
+    if getattr(moderator, "id", None) != getattr(guild, "owner_id", None):
+        if _role_position(target) >= _role_position(moderator):
+            raise ModerationTargetError(
+                "You cannot change the nickname of a member with an equal or higher role."
+            )
+    if _role_position(target) >= _role_position(bot_member):
+        raise ModerationTargetError(
+            "The bot cannot change the nickname of a member with an equal or higher role."
+        )
+
+
+def validate_role_management_target(
+    guild: object,
+    target: object,
+    moderator: object,
+    bot_member: object,
+    *,
+    action: str,
+) -> None:
+    """Validate role-management permission and protect owners and higher roles."""
+    _require_same_guild(guild, target, "target")
+    _require_same_guild(guild, moderator, "moderator")
+    _require_same_guild(guild, bot_member, "bot")
+    _require_moderator(guild, moderator, "manage_roles")
+    _require_bot_permission(bot_member, "manage_roles")
+    target_id = getattr(target, "id", None)
+    if target_id == getattr(moderator, "id", None):
+        raise ModerationTargetError(f"You cannot {action} yourself.")
+    if target_id == getattr(bot_member, "id", None):
+        raise ModerationTargetError(f"The bot cannot {action} itself.")
+    if target_id == getattr(guild, "owner_id", None):
+        raise ModerationTargetError(f"The server owner cannot be {action}.")
+    if getattr(moderator, "id", None) != getattr(guild, "owner_id", None):
+        if _role_position(target) >= _role_position(moderator):
+            raise ModerationTargetError(
+                f"You cannot {action} a member with an equal or higher role."
+            )
+    if _role_position(target) >= _role_position(bot_member):
+        raise ModerationTargetError(
+            f"The bot cannot {action} a member with an equal or higher role."
+        )
+
+
 def validate_unban_target(
     guild: object,
     target_id: int,

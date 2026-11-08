@@ -27,10 +27,14 @@ async def handle_command_error(ctx: commands.Context, error: commands.CommandErr
     original = getattr(error, "original", error)
     command_name = ctx.command.name if ctx.command is not None else ""
     if isinstance(original, (commands.MemberNotFound, commands.UserNotFound)):
-        embed = operation_error_embed("The specified user could not be resolved.")
+        embed = operation_error_embed(
+            "The specified user could not be resolved.", guild=ctx.guild
+        )
     elif isinstance(original, (commands.MissingRequiredArgument, commands.BadArgument)):
-        embed = wrong_usage_embed(command_name) if command_name else operation_error_embed(
-            "The command arguments are invalid."
+        embed = (
+            wrong_usage_embed(command_name, guild=ctx.guild)
+            if command_name
+            else operation_error_embed("The command arguments are invalid.", guild=ctx.guild)
         )
     elif isinstance(
         original,
@@ -42,20 +46,28 @@ async def handle_command_error(ctx: commands.Context, error: commands.CommandErr
         ),
     ):
         embed = (
-            missing_permissions_embed(command_name)
+            missing_permissions_embed(command_name, guild=ctx.guild)
             if command_name in COMMAND_SPECS
-            else operation_error_embed("The required permissions are missing.")
+            else operation_error_embed(
+                "The required permissions are missing.", guild=ctx.guild
+            )
         )
     elif isinstance(original, (ModerationTargetError, ModerationServiceError)):
-        embed = operation_error_embed(str(original))
+        embed = operation_error_embed(str(original), guild=ctx.guild)
     elif isinstance(original, discord.HTTPException):
         logger.warning("Discord rejected moderation command %s (%s).", command_name, original.status)
-        embed = operation_error_embed("Discord could not complete this moderation action.")
+        embed = operation_error_embed(
+            "Discord could not complete this moderation action.", guild=ctx.guild
+        )
     elif isinstance(original, commands.NoPrivateMessage):
-        embed = operation_error_embed("This moderation command can only be used in a server.")
+        embed = operation_error_embed(
+            "This moderation command can only be used in a server.", guild=ctx.guild
+        )
     else:
         logger.error("Unhandled command error for %s: %r", command_name, original)
-        embed = operation_error_embed("The command could not be completed.")
+        embed = operation_error_embed(
+            "The command could not be completed.", guild=ctx.guild
+        )
 
     try:
         await ctx.reply(

@@ -11,6 +11,7 @@ from embeds.moderation import (
     confirmation_embed,
     success_embed,
     warning_history_embeds,
+    warning_info_embed,
     warning_list_embed,
     warning_stats_embed,
 )
@@ -107,6 +108,7 @@ class WarningListView(discord.ui.View):
                 page=self.page,
                 page_size=self.page_size,
                 target=self.target,
+                guild=self.guild,
             ),
             view=self,
         )
@@ -159,7 +161,11 @@ class WarningCog(commands.Cog):
         )
         await ctx.send(
             embed=success_embed(
-                "warn", target=target, reason=warning.reason, warning_id=warning.warning_id
+                "warn",
+                target=target,
+                reason=warning.reason,
+                warning_id=warning.warning_id,
+                guild=ctx.guild,
             ),
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -184,8 +190,28 @@ class WarningCog(commands.Cog):
         )
         await ctx.send(
             embed=success_embed(
-                "unwarn", target=target, warning_id=warning.warning_id
+                "unwarn",
+                target=target,
+                warning_id=warning.warning_id,
+                guild=ctx.guild,
             ),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @commands.command(name="warninfo")
+    @commands.guild_only()
+    @has_guild_permission("manage_messages")
+    async def warninfo(self, ctx: commands.Context, warning_id: int) -> None:
+        """Show the target, moderator, reason, and timestamp for one warning."""
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        warning = await self._service().warning_by_id(
+            guild=ctx.guild,
+            moderator=ctx.author,
+            warning_id=warning_id,
+        )
+        await ctx.send(
+            embed=warning_info_embed(warning, guild=ctx.guild),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -205,7 +231,7 @@ class WarningCog(commands.Cog):
             target=target,
             moderator=ctx.author,
         )
-        pages = warning_history_embeds(target, records)
+        pages = warning_history_embeds(target, records, guild=ctx.guild)
         view = WarningHistoryView(ctx.author.id, pages) if len(pages) > 1 else None
         await ctx.send(
             embed=pages[0],
@@ -248,7 +274,12 @@ class WarningCog(commands.Cog):
         )
         await ctx.send(
             embed=warning_list_embed(
-                records, total=total, page=1, page_size=page_size, target=target
+                records,
+                total=total,
+                page=1,
+                page_size=page_size,
+                target=target,
+                guild=ctx.guild,
             ),
             view=view,
             allowed_mentions=discord.AllowedMentions.none(),
@@ -266,7 +297,7 @@ class WarningCog(commands.Cog):
             moderator=ctx.author,
         )
         await ctx.send(
-            embed=warning_stats_embed(stats),
+            embed=warning_stats_embed(stats, guild=ctx.guild),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -289,7 +320,9 @@ class WarningCog(commands.Cog):
         )
         if not records:
             await ctx.send(
-                embed=operation_error_embed(f"{target.mention} has no warnings to clear."),
+                embed=operation_error_embed(
+                    f"{target.mention} has no warnings to clear.", guild=ctx.guild
+                ),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             return
@@ -297,7 +330,7 @@ class WarningCog(commands.Cog):
         view = BulkActionConfirmationView(ctx.author.id)
         confirmation = await ctx.send(
             embed=confirmation_embed(
-                "clearwarnings", count=len(records), target=target
+                "clearwarnings", count=len(records), target=target, guild=ctx.guild
             ),
             view=view,
             allowed_mentions=discord.AllowedMentions.none(),
@@ -311,7 +344,7 @@ class WarningCog(commands.Cog):
                 else "Warning removal confirmation expired; no warnings were deleted."
             )
             await ctx.send(
-                embed=operation_error_embed(message),
+                embed=operation_error_embed(message, guild=ctx.guild),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             return
@@ -323,7 +356,9 @@ class WarningCog(commands.Cog):
             moderator=ctx.author,
         )
         await ctx.send(
-            embed=success_embed("clearwarnings", target=target, count=removed),
+            embed=success_embed(
+                "clearwarnings", target=target, count=removed, guild=ctx.guild
+            ),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
