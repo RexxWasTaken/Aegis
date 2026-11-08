@@ -10,16 +10,42 @@ import argparse
 import html
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import discord
 
 from core.emoji_manager import EMOJI_IDS
-from embeds.moderation import COMMAND_SPECS, confirmation_embed, success_embed
+from database.repositories.moderation import ModerationWarning
+from embeds.moderation import (
+    COMMAND_SPECS,
+    confirmation_embed,
+    success_embed,
+    warning_history_embeds,
+)
 from embeds.moderation_errors import missing_permissions_embed, wrong_usage_embed
 
 
 CUSTOM_EMOJI_PATTERN = re.compile(r"<:([a-zA-Z0-9_]+):(\d+)>")
 SAMPLE_USER_MENTION = "<@111111111111111111>"
+SAMPLE_USER = SimpleNamespace(id=111111111111111111, mention=SAMPLE_USER_MENTION)
+SAMPLE_WARNINGS = [
+    ModerationWarning(
+        warning_id=104,
+        guild_id=1,
+        target_id=SAMPLE_USER.id,
+        moderator_id=222222222222222222,
+        reason="Repeated spam",
+        created_at="2026-01-01T00:00:00+00:00",
+    ),
+    ModerationWarning(
+        warning_id=98,
+        guild_id=1,
+        target_id=SAMPLE_USER.id,
+        moderator_id=333333333333333333,
+        reason="Disruptive behavior",
+        created_at="2025-12-15T00:00:00+00:00",
+    ),
+]
 
 
 class PreviewConfirmationView(discord.ui.View):
@@ -94,15 +120,28 @@ def render_page() -> str:
     groups: list[str] = []
     confirmation_count = 0
     for name, spec in COMMAND_SPECS.items():
+        if name == "warnings":
+            success = warning_history_embeds(SAMPLE_USER, SAMPLE_WARNINGS)[0]
+        else:
+            success = success_embed(
+                name,
+                warning_id=104 if name in {"warn", "unwarn"} else None,
+                count=2 if name == "clearwarnings" else None,
+                target=SAMPLE_USER if name == "clearwarnings" else None,
+            )
         cases = [
-            render_embed(success_embed(name), "Success"),
+            render_embed(success, "Success"),
             render_embed(wrong_usage_embed(name), "Wrong usage"),
             render_embed(missing_permissions_embed(name), "Permission error"),
         ]
         if spec.confirmation_title is not None:
             cases.append(
                 render_embed(
-                    confirmation_embed(name),
+                    confirmation_embed(
+                        name,
+                        count=2 if name == "clearwarnings" else None,
+                        target=SAMPLE_USER if name == "clearwarnings" else None,
+                    ),
                     "Confirmation",
                     PreviewConfirmationView(),
                 )

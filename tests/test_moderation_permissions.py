@@ -140,6 +140,48 @@ class ModerationPermissionTests(unittest.TestCase):
             action="deafen",
         )
 
+    def test_voice_movement_requires_move_members_permission(self) -> None:
+        from core.permissions import validate_voice_target
+
+        self.moderator.guild_permissions.move_members = True
+        self.bot.guild_permissions.move_members = True
+        validate_voice_target(
+            self.guild,
+            self.target,
+            self.moderator,
+            self.bot,
+            action="disconnect",
+        )
+        self.bot.guild_permissions.move_members = False
+        with self.assertRaisesRegex(ModerationPermissionError, "Move Members"):
+            validate_voice_target(
+                self.guild,
+                self.target,
+                self.moderator,
+                self.bot,
+                action="move",
+            )
+
+    def test_warning_requires_manage_messages_and_respects_hierarchy(self) -> None:
+        from core.permissions import validate_warning_target
+
+        self.moderator.guild_permissions.manage_messages = True
+        validate_warning_target(self.guild, self.target, self.moderator)
+        self.moderator.guild_permissions.manage_messages = False
+        with self.assertRaisesRegex(ModerationPermissionError, "Manage Messages"):
+            validate_warning_target(self.guild, self.target, self.moderator)
+
+        self.moderator.guild_permissions.manage_messages = True
+        peer = member(40, self.guild, 5)
+        with self.assertRaisesRegex(ModerationTargetError, "equal or higher"):
+            validate_warning_target(self.guild, peer, self.moderator)
+        with self.assertRaisesRegex(ModerationTargetError, "this server"):
+            validate_warning_target(
+                self.guild,
+                member(41, SimpleNamespace(id=2, owner_id=99), 1),
+                self.moderator,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

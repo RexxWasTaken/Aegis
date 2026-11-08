@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import discord
 
 from core.emoji_manager import emoji_markup
+from database.repositories.moderation import ModerationWarning
 
 
 SUCCESS_COLOR = discord.Color(0x2ECC71)
@@ -127,6 +129,9 @@ def success_embed(
     duration: str | None = None,
     count: int | None = None,
     total: int | None = None,
+    warning_id: int | None = None,
+    source_channel: discord.abc.GuildChannel | None = None,
+    destination_channel: discord.abc.GuildChannel | None = None,
 ) -> discord.Embed:
     """Build the designed success embed for one registered command."""
     spec = _get_spec(command_name)
@@ -153,6 +158,20 @@ def success_embed(
             title = title.replace("5 members", f"{count} of {total} members")
         else:
             title = title.replace("5 members", f"{count} members")
+    if command_name == "unwarn" and warning_id is not None:
+        description = f"> Warning removed: #{warning_id}"
+    elif command_name == "warn" and warning_id is not None and description:
+        description += f"\n> Warning: #{warning_id}"
+    elif command_name == "clearwarnings" and count is not None:
+        description = f"> Warnings removed: {count}"
+    elif command_name == "move":
+        from_label = source_channel.mention if source_channel is not None else "Unknown"
+        to_label = (
+            destination_channel.mention if destination_channel is not None else "#channel"
+        )
+        description = f"> From: {from_label}\n> To: {to_label}"
+        if reason is not None:
+            description += f"\n> Reason: {discord.utils.escape_mentions(reason)}"
     embed = discord.Embed(
         title=(
             f"{emoji_markup(spec.emoji_name)} {emoji_markup('voice')} {title}"
@@ -165,7 +184,12 @@ def success_embed(
     return embed
 
 
-def confirmation_embed(command_name: str, *, count: int | None = None) -> discord.Embed:
+def confirmation_embed(
+    command_name: str,
+    *,
+    count: int | None = None,
+    target: discord.abc.User | None = None,
+) -> discord.Embed:
     """Build a warning embed for an action that requires confirmation."""
     spec = _get_spec(command_name)
     if spec.confirmation_title is None or spec.confirmation_description is None:
@@ -175,8 +199,55 @@ def confirmation_embed(command_name: str, *, count: int | None = None) -> discor
         description = f"You are about to ban {count} members."
     elif count is not None and command_name == "masskick":
         description = f"You are about to kick {count} members."
+    elif count is not None and command_name == "clearwarnings":
+        target_label = target.mention if target is not None else SAMPLE_USER
+        description = (
+            f"You are about to permanently remove {count} warning(s) from {target_label}."
+        )
+    if target is not None:
+        description = description.replace(SAMPLE_USER, target.mention)
     return discord.Embed(
         title=f"{emoji_markup('warning')} {spec.confirmation_title}",
         description=description,
         color=WARNING_COLOR,
     )
+
+
+def warning_history_embeds(
+    target: discord.abc.User,
+    warnings: list[ModerationWarning],
+    *,
+    page_size: int = 8,
+) -> list[discord.Embed]:
+    """Build bounded, themed pages containing the target's complete warning history."""
+    if page_size < 1 or page_size > 10:
+        raise ValueError("Warning history page size must be between 1 and 10.")
+    page_count = max(1, (len(warnings) + page_size - 1) // page_size)
+    spec = _get_spec("warnings")
+    title = spec.success_title.replace(SAMPLE_USER, target.mention)
+    embeds: list[discord.Embed] = []
+    for page_index in range(page_count):
+        page_warnings = warnings[page_index * page_size : (page_index + 1) * page_size]
+        description = (
+            f"> Active warnings: {len(warnings)}\n> Page: {page_index + 1} of {page_count}"
+        )
+        if not warnings:
+            description += "\n\nNo active warnings."
+        embed = discord.Embed(
+            title=f"{emoji_markup('moderation')} {title}",
+            description=description,
+            color=SUCCESS_COLOR,
+        )
+        for warning in page_warnings:
+            created_at = datetime.fromisoformat(warning.created_at)
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            timestamp = int(created_at.timestamp())
+            reason = discord.utils.escape_mentions(warning.reason)
+            embed.add_field(
+                name=f"Warning #{warning.warning_id} · <t:{timestamp}:R>",
+                value=f"Moderator: <@{warning.moderator_id}>\nReason: {reason}",
+                inline=False,
+            )
+        embeds.append(embed)
+    return embeds

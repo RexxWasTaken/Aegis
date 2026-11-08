@@ -16,8 +16,13 @@ from core.permissions import (
     validate_timeout_target,
     validate_unban_target,
     validate_voice_target,
+    validate_warning_target,
 )
-from database.repositories.moderation import ModerationCase, ModerationRepository
+from database.repositories.moderation import (
+    ModerationCase,
+    ModerationRepository,
+    ModerationWarning,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -439,6 +444,141 @@ class ModerationService:
             raise
         await self._mark_completed(case.case_id)
         return case
+
+    async def disconnect_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_voice_target(
+            guild, target, moderator, bot_member, action="disconnect"
+        )
+        if target.voice is None or target.voice.channel is None:
+            raise ModerationTargetError("The target must be connected to a voice channel.")
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="disconnect",
+            reason=normalized_reason,
+        )
+        try:
+            await target.move_to(
+                None, reason=f"Case #{case.case_id}: {normalized_reason}"[:512]
+            )
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def move_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        destination: discord.VoiceChannel | discord.StageChannel,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_voice_target(guild, target, moderator, bot_member, action="move")
+        if target.voice is None or target.voice.channel is None:
+            raise ModerationTargetError("The target must be connected to a voice channel.")
+        destination_guild = getattr(destination, "guild", None)
+        if getattr(destination_guild, "id", None) != guild.id:
+            raise ModerationTargetError("The destination must be a voice channel in this server.")
+        if getattr(destination, "type", None) not in {
+            discord.ChannelType.voice,
+            discord.ChannelType.stage_voice,
+        }:
+            raise ModerationTargetError("The destination must be a voice or stage channel.")
+        if target.voice.channel.id == destination.id:
+            raise ModerationTargetError("The target is already in that voice channel.")
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="move",
+            reason=normalized_reason,
+        )
+        try:
+            await target.move_to(
+                destination, reason=f"Case #{case.case_id}: {normalized_reason}"[:512]
+            )
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def warn_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationWarning:
+        validate_warning_target(guild, target, moderator)
+        return await self.repository.create_warning(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            reason=normalize_reason(reason),
+        )
+
+    async def warnings_for_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+    ) -> list[ModerationWarning]:
+        validate_warning_target(guild, target, moderator)
+        return await self.repository.list_warnings(
+            guild_id=guild.id, target_id=target.id
+        )
+
+    async def remove_warning(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        warning_id: int,
+        moderator: discord.Member,
+    ) -> ModerationWarning:
+        validate_warning_target(guild, target, moderator)
+        if warning_id <= 0:
+            raise ModerationTargetError("Provide a valid warning ID.")
+        warning = await self.repository.delete_warning(
+            guild_id=guild.id,
+            target_id=target.id,
+            warning_id=warning_id,
+        )
+        if warning is None:
+            raise ModerationTargetError(
+                f"Warning #{warning_id} was not found for this member in this server."
+            )
+        return warning
+
+    async def clear_warnings_for_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+    ) -> int:
+        validate_warning_target(guild, target, moderator)
+        return await self.repository.clear_warnings(
+            guild_id=guild.id, target_id=target.id
+        )
 
     async def softban_member(
         self,

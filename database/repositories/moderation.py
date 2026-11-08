@@ -23,6 +23,16 @@ class ModerationCase:
     status: str
 
 
+@dataclass(frozen=True)
+class ModerationWarning:
+    warning_id: int
+    guild_id: int
+    target_id: int
+    moderator_id: int
+    reason: str
+    created_at: str
+
+
 class ModerationRepository:
     """Stores moderation audit cases without resetting existing database data."""
 
@@ -55,6 +65,18 @@ class ModerationRepository:
                 )
                 """
             )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS moderation_warnings (
+                    warning_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    moderator_id INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
             cursor = await self._db.execute("PRAGMA table_info(moderation_cases)")
             columns = {row["name"] for row in await cursor.fetchall()}
             if "status" not in columns:
@@ -71,13 +93,17 @@ class ModerationRepository:
                 "ON moderation_cases(guild_id, target_id)"
             )
             await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_moderation_warnings_target "
+                "ON moderation_warnings(guild_id, target_id, warning_id)"
+            )
+            await self._db.execute(
                 """
                 UPDATE moderation_cases
                 SET status = 'completed'
                 WHERE action_type = 'tempban' AND status = 'expiry_pending'
                 """
             )
-            await self._db.execute("PRAGMA user_version = 1")
+            await self._db.execute("PRAGMA user_version = 2")
             await self._db.commit()
 
     def _connection(self) -> aiosqlite.Connection:
@@ -99,7 +125,7 @@ class ModerationRepository:
             "ban", "unban", "softban", "tempban", "kick", "massban", "masskick",
             "timeout", "untimeout", "mute", "unmute",
             "voicemute", "voiceunmute",
-            "deafen", "undeafen",
+            "deafen", "undeafen", "disconnect", "move",
         }:
             raise ValueError("Unsupported moderation action for this repository method.")
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -127,6 +153,95 @@ class ModerationRepository:
             expires_at=expires_at,
             status="pending",
         )
+
+    async def create_warning(
+        self,
+        *,
+        guild_id: int,
+        target_id: int,
+        moderator_id: int,
+        reason: str,
+    ) -> ModerationWarning:
+        """Persist a warning with its guild, target, moderator and timestamp."""
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                INSERT INTO moderation_warnings
+                    (guild_id, target_id, moderator_id, reason, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (guild_id, target_id, moderator_id, reason, created_at),
+            )
+            await self._connection().commit()
+            warning_id = int(cursor.lastrowid)
+        return ModerationWarning(
+            warning_id=warning_id,
+            guild_id=guild_id,
+            target_id=target_id,
+            moderator_id=moderator_id,
+            reason=reason,
+            created_at=created_at,
+        )
+
+    async def list_warnings(
+        self, *, guild_id: int, target_id: int
+    ) -> list[ModerationWarning]:
+        """Return one member's warnings in this guild, newest first."""
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT warning_id, guild_id, target_id, moderator_id, reason, created_at
+                FROM moderation_warnings
+                WHERE guild_id = ? AND target_id = ?
+                ORDER BY warning_id DESC
+                """,
+                (guild_id, target_id),
+            )
+            rows = await cursor.fetchall()
+        return [ModerationWarning(**dict(row)) for row in rows]
+
+    async def delete_warning(
+        self, *, guild_id: int, target_id: int, warning_id: int
+    ) -> ModerationWarning | None:
+        """Delete only the requested warning belonging to this guild and member."""
+        async with self._lock:
+            db = self._connection()
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                """
+                SELECT warning_id, guild_id, target_id, moderator_id, reason, created_at
+                FROM moderation_warnings
+                WHERE warning_id = ? AND guild_id = ? AND target_id = ?
+                """,
+                (warning_id, guild_id, target_id),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                await db.commit()
+                return None
+            await db.execute(
+                """
+                DELETE FROM moderation_warnings
+                WHERE warning_id = ? AND guild_id = ? AND target_id = ?
+                """,
+                (warning_id, guild_id, target_id),
+            )
+            await db.commit()
+        return ModerationWarning(**dict(row))
+
+    async def clear_warnings(self, *, guild_id: int, target_id: int) -> int:
+        """Delete only one member's warning records from the specified guild."""
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                DELETE FROM moderation_warnings
+                WHERE guild_id = ? AND target_id = ?
+                """,
+                (guild_id, target_id),
+            )
+            await self._connection().commit()
+        return cursor.rowcount
 
     async def update_case_status(self, case_id: int, status: str) -> None:
         if status not in {

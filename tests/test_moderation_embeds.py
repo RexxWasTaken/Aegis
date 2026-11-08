@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import discord
 
 from core.emoji_manager import EMOJI_IDS, emoji_markup
+from database.repositories.moderation import ModerationWarning
 from embeds.moderation import (
     COMMAND_SPECS,
     ERROR_COLOR,
@@ -13,6 +14,7 @@ from embeds.moderation import (
     WARNING_COLOR,
     confirmation_embed,
     success_embed,
+    warning_history_embeds,
 )
 from embeds.moderation_errors import missing_permissions_embed, wrong_usage_embed
 
@@ -119,6 +121,43 @@ class ModerationEmbedTests(unittest.TestCase):
         success = success_embed("masskick", count=3, total=4)
         self.assertEqual(confirmation.description, "You are about to kick 4 members.")
         self.assertIn("Kicked 3 of 4 members", success.title)
+
+    def test_warning_embeds_show_actual_ids_counts_and_paginated_history(self) -> None:
+        target = SimpleNamespace(id=123, mention="<@123>")
+        warned = success_embed(
+            "warn", target=target, reason="@everyone repeated spam", warning_id=44
+        )
+        self.assertIn("Warning: #44", warned.description)
+        self.assertNotIn("@everyone", warned.description)
+
+        removed = success_embed("unwarn", target=target, warning_id=44)
+        self.assertIn("Warning removed: #44", removed.description)
+        cleared = success_embed("clearwarnings", target=target, count=3)
+        self.assertIn("Warnings removed: 3", cleared.description)
+        confirmation = confirmation_embed(
+            "clearwarnings", count=3, target=target
+        )
+        self.assertIn("3 warning(s)", confirmation.description)
+        self.assertIn("<@123>", confirmation.description)
+
+        warnings = [
+            ModerationWarning(
+                warning_id=warning_id,
+                guild_id=1,
+                target_id=123,
+                moderator_id=50 + warning_id,
+                reason="@here reason",
+                created_at="2026-01-01T00:00:00+00:00",
+            )
+            for warning_id in range(9, 0, -1)
+        ]
+        pages = warning_history_embeds(target, warnings)
+        self.assertEqual(len(pages), 2)
+        self.assertIn("Active warnings: 9", pages[0].description)
+        self.assertEqual(len(pages[0].fields), 8)
+        self.assertEqual(len(pages[1].fields), 1)
+        self.assertIn("Warning #9", pages[0].fields[0].name)
+        self.assertNotIn("@here", pages[0].fields[0].value)
 
     def test_custom_emoji_catalog_and_unknown_handling(self) -> None:
         self.assertEqual(len(EMOJI_IDS), 40)

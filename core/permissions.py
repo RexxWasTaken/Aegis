@@ -83,6 +83,8 @@ def _validate_member_target(
             "voiceunmute": "voice-unmuted",
             "deafen": "deafened",
             "undeafen": "undeafened",
+            "disconnect": "disconnected",
+            "move": "moved",
         }
         participle = participles.get(action, f"{action}ed")
         raise ModerationTargetError(f"The server owner cannot be {participle}.")
@@ -147,12 +149,17 @@ def validate_voice_target(
     *,
     action: str,
 ) -> None:
-    """Validate server voice moderation permission and target hierarchy."""
-    if action not in {"voicemute", "voiceunmute", "deafen", "undeafen"}:
+    """Validate voice moderation/movement permission and target hierarchy."""
+    if action not in {
+        "voicemute", "voiceunmute", "deafen", "undeafen", "disconnect", "move"
+    }:
         raise ValueError("Unsupported voice moderation action.")
-    permission = (
-        "deafen_members" if action in {"deafen", "undeafen"} else "mute_members"
-    )
+    if action in {"deafen", "undeafen"}:
+        permission = "deafen_members"
+    elif action in {"disconnect", "move"}:
+        permission = "move_members"
+    else:
+        permission = "mute_members"
     _validate_member_target(
         guild,
         target,
@@ -161,6 +168,28 @@ def validate_voice_target(
         permission=permission,
         action=action,
     )
+
+
+def validate_warning_target(
+    guild: object,
+    target: object,
+    moderator: object,
+) -> None:
+    """Validate a warning target and the moderator's Manage Messages permission."""
+    _require_same_guild(guild, target, "target")
+    _require_same_guild(guild, moderator, "moderator")
+    _require_moderator(guild, moderator, "manage_messages")
+    if getattr(target, "bot", False):
+        raise ModerationTargetError("Bot accounts cannot receive warnings.")
+    if getattr(target, "id", None) == getattr(moderator, "id", None):
+        raise ModerationTargetError("You cannot warn yourself.")
+    if getattr(target, "id", None) == getattr(guild, "owner_id", None):
+        raise ModerationTargetError("The server owner cannot be warned.")
+    if getattr(moderator, "id", None) != getattr(guild, "owner_id", None):
+        if _role_position(target) >= _role_position(moderator):
+            raise ModerationTargetError(
+                "You cannot warn a member with an equal or higher role."
+            )
 
 
 def validate_unban_target(

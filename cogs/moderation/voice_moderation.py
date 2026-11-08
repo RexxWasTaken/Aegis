@@ -102,6 +102,90 @@ class VoiceModerationCog(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
+    @commands.command(name="undeafen")
+    @commands.guild_only()
+    @has_guild_permission("deafen_members")
+    async def undeafen(
+        self,
+        ctx: commands.Context,
+        target: discord.Member,
+        *,
+        reason: str = "No reason provided.",
+    ) -> None:
+        """Remove server-deafening from a member connected to voice."""
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        case = await self._service().undeafen_member(
+            guild=ctx.guild,
+            target=target,
+            moderator=ctx.author,
+            bot_member=await self._bot_member(ctx.guild),
+            reason=reason,
+        )
+        await ctx.send(
+            embed=success_embed("undeafen", target=target, reason=case.reason),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @commands.command(name="disconnect")
+    @commands.guild_only()
+    @has_guild_permission("move_members")
+    async def disconnect(
+        self,
+        ctx: commands.Context,
+        target: discord.Member,
+        *,
+        reason: str = "No reason provided.",
+    ) -> None:
+        """Disconnect a member from voice after validating voice state and hierarchy."""
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        case = await self._service().disconnect_member(
+            guild=ctx.guild,
+            target=target,
+            moderator=ctx.author,
+            bot_member=await self._bot_member(ctx.guild),
+            reason=reason,
+        )
+        await ctx.send(
+            embed=success_embed("disconnect", target=target, reason=case.reason),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @commands.command(name="move")
+    @commands.guild_only()
+    @has_guild_permission("move_members")
+    async def move(
+        self,
+        ctx: commands.Context,
+        target: discord.Member,
+        destination: discord.VoiceChannel,
+        *,
+        reason: str = "No reason provided.",
+    ) -> None:
+        """Move a connected member to another voice channel in this server."""
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        source_channel = target.voice.channel if target.voice is not None else None
+        case = await self._service().move_member(
+            guild=ctx.guild,
+            target=target,
+            destination=destination,
+            moderator=ctx.author,
+            bot_member=await self._bot_member(ctx.guild),
+            reason=reason,
+        )
+        await ctx.send(
+            embed=success_embed(
+                "move",
+                target=target,
+                reason=case.reason,
+                source_channel=source_channel,
+                destination_channel=destination,
+            ),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(VoiceModerationCog(bot))
