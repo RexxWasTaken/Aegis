@@ -6,10 +6,24 @@ import discord
 from discord.ext import commands
 
 from core.bot import AegisBot
+from core.loader import load_extensions
+
+
+EXPECTED_COMMANDS = {
+    "ban", "unban", "softban", "tempban", "massban",
+    "lock", "unlock", "lockall", "unlockall", "slowmode",
+    "jail", "unjail", "kick", "masskick", "nick", "resetnick",
+    "purge", "purgeuser", "purgebots", "purgehumans", "purgelinks",
+    "purgeinvites", "purgeimages", "purgefiles", "purgeembeds",
+    "purgementions", "purgecontains", "purgeafter", "timeout",
+    "untimeout", "mute", "unmute", "voicemute", "voiceunmute",
+    "deafen", "undeafen", "disconnect", "move", "warn", "unwarn",
+    "warninfo", "warnings", "warnlist", "warnstats", "clearwarnings",
+}
 
 
 class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_moderation_extensions_register_first_twenty_eight_commands_and_aliases(self) -> None:
+    async def test_all_forty_five_moderation_commands_and_aliases_register(self) -> None:
         bot = commands.Bot(
             command_prefix="a!",
             intents=discord.Intents.none(),
@@ -17,22 +31,9 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
         )
         bot.moderation_service = object()
         try:
-            await bot.load_extension("cogs.moderation.bans")
-            await bot.load_extension("cogs.moderation.kicks")
-            await bot.load_extension("cogs.moderation.timeouts")
-            await bot.load_extension("cogs.moderation.voice_moderation")
-            await bot.load_extension("cogs.moderation.warnings")
-            await bot.load_extension("cogs.moderation.purge")
+            await load_extensions(bot)
             self.assertEqual(
-                {command.name for command in bot.commands},
-                {
-                    "ban", "unban", "softban", "tempban", "massban", "kick",
-                    "masskick", "timeout", "untimeout", "mute", "unmute",
-                    "voicemute", "voiceunmute", "deafen", "undeafen",
-                    "disconnect", "move", "warn", "unwarn", "warnings",
-                    "clearwarnings", "warnlist", "warnstats", "purge",
-                    "purgeuser", "purgebots", "purgehumans", "purgelinks",
-                },
+                {command.name for command in bot.commands}, EXPECTED_COMMANDS
             )
             registered_names = [
                 name
@@ -55,15 +56,7 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(bot.moderation_repository)
             self.assertIsNotNone(bot.moderation_service)
             self.assertEqual(
-                {command.name for command in bot.commands},
-                {
-                    "ban", "unban", "softban", "tempban", "massban", "kick",
-                    "masskick", "timeout", "untimeout", "mute", "unmute",
-                    "voicemute", "voiceunmute", "deafen", "undeafen",
-                    "disconnect", "move", "warn", "unwarn", "warnings",
-                    "clearwarnings", "warnlist", "warnstats", "purge",
-                    "purgeuser", "purgebots", "purgehumans", "purgelinks",
-                },
+                {command.name for command in bot.commands}, EXPECTED_COMMANDS
             )
             self.assertIsNotNone(bot.tempban_expiry_task)
             self.assertTrue(bot.tempban_expiry_task.run.is_running())
