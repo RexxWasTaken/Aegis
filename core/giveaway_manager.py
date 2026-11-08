@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 GIVEAWAY_EMOJI_ID = 1518667382581760110
+MAX_GIVEAWAY_PRIZE_LENGTH = 500
 
 
 class GiveawayManagerError(RuntimeError):
@@ -46,8 +47,13 @@ class GiveawayManager:
         duration: timedelta,
         winner_count: int,
     ) -> GiveawayRecord:
-        if not prize.strip():
+        normalized_prize = prize.strip()
+        if not normalized_prize:
             raise GiveawayManagerError("A giveaway prize is required.")
+        if len(normalized_prize) > MAX_GIVEAWAY_PRIZE_LENGTH:
+            raise GiveawayManagerError(
+                f"Giveaway prizes must be {MAX_GIVEAWAY_PRIZE_LENGTH} characters or fewer."
+            )
         if duration.total_seconds() <= 0:
             raise GiveawayManagerError("Giveaway duration must be greater than zero.")
         if winner_count < 1:
@@ -56,7 +62,7 @@ class GiveawayManager:
         try:
             message = await channel.send(
                 embed=giveaway_announcement(
-                    prize=prize.strip(),
+                    prize=normalized_prize,
                     winner_count=winner_count,
                     host=host,
                     ends_at=ends_at,
@@ -88,7 +94,7 @@ class GiveawayManager:
                 guild_id=channel.guild.id,
                 channel_id=channel.id,
                 host_id=host.id,
-                prize=prize.strip(),
+                prize=normalized_prize,
                 winner_count=winner_count,
                 ends_at=ends_at,
             )

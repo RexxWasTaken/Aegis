@@ -154,6 +154,64 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await manager.can_access(ticket, _member(50, role_ids=(99,))))
         self.assertFalse(await manager.can_access(ticket, _member(60)))
 
+    async def test_close_reopen_and_claim_apply_permissions_and_persist_state(self) -> None:
+        repository = Mock()
+        repository.get_ticket_config = AsyncMock(
+            return_value=TicketConfig(10, 99, None, None)
+        )
+        manager = TicketManager(Mock(), repository)
+        manager.log_event = AsyncMock()
+        manager.transcript_bytes = AsyncMock(return_value=b"transcript")
+        creator = _member(30)
+        staff = _member(50, role_ids=(99,))
+        guild = SimpleNamespace(get_member=lambda member_id: creator if member_id == 30 else None)
+        channel = Mock(spec=discord.TextChannel)
+        channel.guild = guild
+        overwrite = SimpleNamespace(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+        )
+        channel.overwrites_for.return_value = overwrite
+        channel.set_permissions = AsyncMock()
+
+        closed = _ticket(status="closed")
+        repository.set_ticket_status = AsyncMock(return_value=closed)
+        updated = await manager.close(
+            ticket=_ticket(),
+            channel=channel,
+            actor=creator,
+        )
+        self.assertEqual(updated.status, "closed")
+        self.assertFalse(overwrite.send_messages)
+        repository.set_ticket_status.assert_awaited_once_with(
+            channel_id=20,
+            status="closed",
+            closed_at=repository.set_ticket_status.await_args.kwargs["closed_at"],
+        )
+
+        claimed = _ticket(claimed_by=50)
+        repository.claim_ticket = AsyncMock(return_value=claimed)
+        self.assertEqual(
+            (await manager.claim(_ticket(), staff)).claimed_by,
+            staff.id,
+        )
+
+        opened = _ticket(status="open")
+        repository.set_ticket_status = AsyncMock(return_value=opened)
+        reopened = await manager.reopen(
+            ticket=closed,
+            channel=channel,
+            actor=staff,
+        )
+        self.assertEqual(reopened.status, "open")
+        self.assertTrue(overwrite.send_messages)
+        repository.set_ticket_status.assert_awaited_once_with(
+            channel_id=20,
+            status="open",
+            closed_at=None,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,15 @@ from utils.duration import format_duration
 
 
 GIVEAWAY_COLOR = discord.Color(0x00B8D9)
+_MAX_VISIBLE_WINNERS = 50
+
+
+def _limited(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+
+
+def _safe_prize(prize: str, limit: int = 1000) -> str:
+    return _limited(discord.utils.escape_markdown(prize), limit)
 
 
 def giveaway_announcement(
@@ -35,7 +44,7 @@ def giveaway_announcement(
     embed = discord.Embed(
         title=f"{emoji_markup('giveaway')} NEW GIVEAWAY",
         description=(
-            f"**{discord.utils.escape_markdown(prize)}**\n\n"
+            f"**{_safe_prize(prize)}**\n\n"
             f"{arrow} Winners: {winner_count}\n"
             f"{arrow} Hosted by: {host_mention}\n"
             f"{end_line}\n\n"
@@ -60,8 +69,14 @@ def giveaway_ended_embed(
 ) -> discord.Embed:
     if winners:
         winner_text = "\n".join(
-            f"{emoji_markup('success')} <@{winner_id}>" for winner_id in winners
+            f"{emoji_markup('success')} <@{winner_id}>"
+            for winner_id in winners[:_MAX_VISIBLE_WINNERS]
         )
+        if len(winners) > _MAX_VISIBLE_WINNERS:
+            winner_text += (
+                f"\n…and {len(winners) - _MAX_VISIBLE_WINNERS} more winner(s) "
+                "are saved with this giveaway."
+            )
         heading = "New winners" if reroll else "Congratulations!"
     else:
         winner_text = "No eligible participants entered." if not reroll else (
@@ -74,7 +89,7 @@ def giveaway_ended_embed(
             f"{heading}\n\n"
             f"{winner_text}\n\n"
             f"{emoji_markup('giveaway')} Prize: "
-            f"{discord.utils.escape_markdown(giveaway.prize)}"
+            f"{_safe_prize(giveaway.prize)}"
         ),
         color=GIVEAWAY_COLOR,
     )
@@ -93,8 +108,44 @@ def giveaway_list_embed(records: Sequence[GiveawayRecord]) -> discord.Embed:
     for record in records:
         state = "Paused" if record.status == "paused" else "Active"
         lines.append(
-            f"`{record.message_id}` — **{discord.utils.escape_markdown(record.prize)}** "
+            f"`{record.message_id}` — **{_safe_prize(record.prize, 80)}** "
             f"({state}, {record.winner_count} winner(s))"
         )
     embed.description = "\n".join(lines)
+    return embed
+
+
+def giveaway_info_embed(giveaway: GiveawayRecord) -> discord.Embed:
+    """Show the saved state of a giveaway without exceeding Discord limits."""
+    ends_at = datetime.fromisoformat(giveaway.ends_at)
+    if ends_at.tzinfo is None:
+        ends_at = ends_at.replace(tzinfo=timezone.utc)
+    if giveaway.status == "paused":
+        end_text = (
+            "Paused — "
+            f"{format_duration(timedelta(seconds=max(1, giveaway.paused_seconds or 1)))} "
+            "remaining"
+        )
+    else:
+        end_timestamp = int(ends_at.astimezone(timezone.utc).timestamp())
+        end_text = f"<t:{end_timestamp}:F> (<t:{end_timestamp}:R>)"
+
+    winners = [
+        f"<@{winner_id}>" for winner_id in giveaway.winners[:25]
+    ]
+    if len(giveaway.winners) > 25:
+        winners.append(f"…and {len(giveaway.winners) - 25} more")
+    embed = discord.Embed(
+        title=f"{emoji_markup('giveaway')} Giveaway Info",
+        description=f"**Prize:** {_safe_prize(giveaway.prize)}",
+        color=GIVEAWAY_COLOR,
+    )
+    for name, value in (
+        ("Status", giveaway.status.title()),
+        ("Hosted by", f"<@{giveaway.host_id}>"),
+        ("Winner slots", str(giveaway.winner_count)),
+        ("Ends", end_text),
+        ("Selected winners", "\n".join(winners) if winners else "Not selected"),
+    ):
+        embed.add_field(name=name, value=_limited(value, 1024), inline=False)
     return embed

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 from core.emoji_manager import emoji_markup
 from core.help_view import HelpView, discover_commands, find_command, ordered_categories
-from embeds.help import help_command_details, help_front_page
+from embeds.help import help_category_page, help_command_details, help_front_page
 
 
 def _permission_check():
@@ -173,6 +173,43 @@ class HelpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embed.fields[0].value, "Uncategorized")
         self.assertNotIn(emoji_markup("utility"), embed.fields[0].value)
 
+    def test_help_embeds_respect_discord_field_and_total_character_limits(self) -> None:
+        long_entry = SimpleNamespace(
+            qualified_name="command" * 100,
+            aliases=("alias" * 300,),
+            usage="usage" * 300,
+            description="description" * 500,
+            permissions=("permission" * 200,),
+            examples=("example" * 300,),
+        )
+        page = help_category_page(
+            category="Uncategorized" * 100,
+            mode="prefix",
+            entries=[long_entry] * 5,
+            page=1,
+            page_count=20,
+        )
+        details = help_command_details(
+            SimpleNamespace(
+                category="Uncategorized" * 100,
+                description="description" * 1000,
+                qualified_name="command" * 1000,
+                usage="usage" * 1000,
+                aliases=("alias" * 1000,),
+                permissions=("permission" * 1000,),
+                examples=("example" * 1000,),
+            )
+        )
+        home = help_front_page(["UnknownCategory" * 20 for _ in range(25)])
+
+        for embed in (page, details, home):
+            self.assertLessEqual(len(embed), 6000)
+            self.assertLessEqual(len(embed.title or ""), 256)
+            self.assertLessEqual(len(embed.description or ""), 4096)
+            for field in embed.fields:
+                self.assertLessEqual(len(field.name), 256)
+                self.assertLessEqual(len(field.value), 1024)
+
     def test_command_details_only_show_recorded_examples_and_permissions(self) -> None:
         info = find_command(self.bot, "ban")
         embed = help_command_details(info)
@@ -201,6 +238,31 @@ class HelpTests(unittest.IsolatedAsyncioTestCase):
             "Only the person who opened this Help menu can use it.",
             ephemeral=True,
         )
+
+    def test_category_pagination_shows_every_registered_command(self) -> None:
+        commands = [
+            _prefix_command(
+                f"command_{index}",
+                cog_name="UnmappedCog",
+                description=f"Command number {index}.",
+            )
+            for index in range(11)
+        ]
+        view = HelpView(_FakeBot(commands), author_id=42)
+        view.category = "Unmapped"
+
+        first_page, page_count = view._page_data()
+        self.assertEqual(page_count, 3)
+        self.assertEqual(len(first_page.fields), 5)
+        self.assertEqual(first_page.footer.text, "Page 1 of 3")
+
+        names = []
+        for page_number in range(1, page_count + 1):
+            view.page = page_number
+            page, _ = view._page_data()
+            names.extend(field.name for field in page.fields)
+        self.assertEqual(len(names), 11)
+        self.assertEqual(set(names), {f"command_{index}" for index in range(11)})
 
 
 if __name__ == "__main__":

@@ -44,11 +44,29 @@ def help_front_page(categories: Sequence[str]) -> discord.Embed:
         ),
         color=HELP_COLOR,
     )
-    category_lines = [_category_heading(category) for category in categories]
-    if category_lines:
+    category_lines = [
+        _limited(_category_heading(category), 100)
+        for category in categories[:25]
+    ]
+    category_fields: list[list[str]] = []
+    current_field: list[str] = []
+    current_length = 0
+    for line in category_lines:
+        line_length = len(line) + (1 if current_field else 0)
+        if current_field and current_length + line_length > 1024:
+            category_fields.append(current_field)
+            current_field = []
+            current_length = 0
+            line_length = len(line)
+        current_field.append(line)
+        current_length += line_length
+    if current_field:
+        category_fields.append(current_field)
+
+    for index, lines in enumerate(category_fields):
         embed.add_field(
-            name="Categories",
-            value="\n".join(category_lines),
+            name="Categories" if index == 0 else f"Categories ({index + 1})",
+            value="\n".join(lines),
             inline=False,
         )
     return embed
@@ -64,7 +82,10 @@ def help_category_page(
 ) -> discord.Embed:
     """Build a compact page with actual command names and discovered metadata."""
     embed = discord.Embed(
-        title=f"{_category_heading(category)} {category.upper()} COMMANDS",
+        title=_limited(
+            f"{_category_heading(category)} {category.upper()} COMMANDS",
+            256,
+        ),
         description=f"{mode.title()} commands",
         color=HELP_COLOR,
     )
@@ -83,7 +104,7 @@ def help_category_page(
         )
         embed.add_field(
             name=_limited(entry.qualified_name, 256),
-            value=_limited(value, 1024),
+            value=_limited(value, 800),
             inline=False,
         )
     if not entries:
@@ -100,18 +121,22 @@ def help_command_details(info: Any) -> discord.Embed:
     if not examples:
         examples = "No verified examples are documented."
     embed = discord.Embed(
-        title=f"{_category_heading(info.category)} command details",
-        description=info.description,
+        title=_limited(f"{_category_heading(info.category)} command details", 256),
+        description=_limited(info.description, 1024),
         color=HELP_COLOR,
     )
-    embed.add_field(name="Command", value=_limited(info.qualified_name, 1024), inline=False)
-    embed.add_field(name="Usage", value=_limited(info.usage, 1024), inline=False)
-    embed.add_field(name="Aliases", value=_limited(aliases, 1024), inline=False)
+    embed.add_field(name="Command", value=_limited(info.qualified_name, 256), inline=False)
+    embed.add_field(name="Usage", value=_limited(info.usage, 512), inline=False)
+    embed.add_field(name="Aliases", value=_limited(aliases, 512), inline=False)
     embed.add_field(
         name="Required permissions",
-        value=_limited(permissions, 1024),
+        value=_limited(permissions, 512),
         inline=False,
     )
     embed.add_field(name="Verified examples", value=_limited(examples, 1024), inline=False)
-    embed.add_field(name="Category", value=_category_heading(info.category), inline=False)
+    embed.add_field(
+        name="Category",
+        value=_limited(_category_heading(info.category), 256),
+        inline=False,
+    )
     return embed
