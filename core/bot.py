@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 
 import discord
@@ -10,9 +11,13 @@ from discord.ext import commands
 
 from core.errors import handle_command_error
 from core.loader import load_extensions
+from database.repositories.community import CommunityRepository
 from database.repositories.moderation import ModerationRepository
 from services.moderation_service import ModerationService
 from tasks.tempban_expiry import TempBanExpiryTask
+
+
+logger = logging.getLogger(__name__)
 
 
 class AegisBot(commands.Bot):
@@ -27,15 +32,29 @@ class AegisBot(commands.Bot):
         self.moderation_repository: ModerationRepository | None = None
         self.moderation_service: ModerationService | None = None
         self.tempban_expiry_task: TempBanExpiryTask | None = None
+        self.community_repository: CommunityRepository | None = None
+        self._application_commands_synced = False
 
     async def setup_hook(self) -> None:
         repository = ModerationRepository(self.database_path)
         await repository.initialize()
         self.moderation_repository = repository
         self.moderation_service = ModerationService(repository)
+        community_repository = CommunityRepository(self.database_path)
+        await community_repository.initialize()
+        self.community_repository = community_repository
         await load_extensions(self)
         self.tempban_expiry_task = TempBanExpiryTask(self, repository)
         self.tempban_expiry_task.start()
+
+    async def on_ready(self) -> None:
+        if self.tree.get_commands() and not self._application_commands_synced:
+            try:
+                await self.tree.sync()
+            except discord.HTTPException:
+                logger.exception("Could not synchronize AEGIS slash commands.")
+            else:
+                self._application_commands_synced = True
 
     async def on_command_error(
         self,
@@ -45,9 +64,15 @@ class AegisBot(commands.Bot):
         await handle_command_error(ctx, error)
 
     async def close(self) -> None:
+        giveaway_cog = self.get_cog("GiveawayCog")
+        if giveaway_cog is not None:
+            giveaway_cog.expire_due_giveaways.cancel()
         if self.tempban_expiry_task is not None:
             self.tempban_expiry_task.cancel()
             self.tempban_expiry_task = None
+        if self.community_repository is not None:
+            await self.community_repository.close()
+            self.community_repository = None
         if self.moderation_repository is not None:
             await self.moderation_repository.close()
             self.moderation_repository = None
