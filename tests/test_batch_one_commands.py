@@ -41,7 +41,7 @@ class BatchOneCommandTests(unittest.IsolatedAsyncioTestCase):
             bot_member=self.bot_member,
             reason="reviewed",
         )
-        self.assertIn("Undeafened", self.ctx.send.await_args.kwargs["embed"].title)
+        self.assertIn("Undeafened", self.ctx.send.await_args.kwargs["embed"].description)
 
         self.ctx.send.reset_mock()
         self.service.disconnect_member.return_value = SimpleNamespace(reason="cleanup")
@@ -55,7 +55,7 @@ class BatchOneCommandTests(unittest.IsolatedAsyncioTestCase):
             bot_member=self.bot_member,
             reason="cleanup",
         )
-        self.assertIn("Disconnected", self.ctx.send.await_args.kwargs["embed"].title)
+        self.assertIn("Disconnected", self.ctx.send.await_args.kwargs["embed"].description)
 
         self.ctx.send.reset_mock()
         destination = SimpleNamespace(id=50, mention="<#50>")

@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import discord
 
-from core.emoji_manager import EMOJI_IDS, emoji_markup
+import core.emoji_manager as emoji_manager_module
+
+from core.emoji_manager import EMOJI_IDS, emoji_for, emoji_markup
 from database.repositories.moderation import ModerationWarning, WarningStats
 from embeds.moderation import (
     COMMAND_SPECS,
@@ -48,8 +50,12 @@ class ModerationEmbedTests(unittest.TestCase):
                 self.assertIsInstance(usage, discord.Embed)
                 self.assertIsInstance(permission, discord.Embed)
                 self.assertEqual(success.color, SUCCESS_COLOR)
+                self.assertIsNone(success.title)
+                self.assertTrue(success.description.startswith(emoji_markup("success")))
                 self.assertEqual(usage.color, ERROR_COLOR)
                 self.assertEqual(permission.color, ERROR_COLOR)
+                self.assertTrue(usage.description.startswith(emoji_markup("wrong")))
+                self.assertTrue(permission.description.startswith(emoji_markup("error")))
                 self.assertIn(COMMAND_SPECS[name].usage, usage.description)
                 self.assertIn("required permissions", permission.description)
 
@@ -70,59 +76,61 @@ class ModerationEmbedTests(unittest.TestCase):
                 embed = confirmation_embed(name)
                 self.assertIsInstance(embed, discord.Embed)
                 self.assertEqual(embed.color, WARNING_COLOR)
-                self.assertIn(emoji_markup("warning"), embed.title)
+                self.assertIn("Are you sure you want", embed.description)
+                self.assertTrue(embed.description.startswith(emoji_markup("warning")))
 
     def test_requested_examples_match_the_spec(self) -> None:
         ban = success_embed("ban")
         timeout = success_embed("timeout")
         kick = success_embed("kick")
         purge = success_embed("purge")
-        self.assertIn("Banned", ban.title)
-        self.assertEqual(ban.description, "> Reason: Breaking rules")
+        self.assertIsNone(ban.title)
+        self.assertIn("Banned", ban.description)
+        self.assertIn("Reason: Breaking rules", ban.description)
         self.assertIn("Duration: 10 minutes", timeout.description)
         self.assertIn("Reason: Spamming", timeout.description)
-        self.assertIn("Kicked", kick.title)
-        self.assertIn("Successfully deleted 50 messages", purge.title)
+        self.assertIn("Kicked", kick.description)
+        self.assertIn("Deleted **50 messages**", purge.description)
 
     def test_ban_and_unban_success_embeds_use_the_real_target_and_reason(self) -> None:
         target = SimpleNamespace(id=123, mention="<@123>")
         ban = success_embed("ban", target=target, reason="Reviewed")
         unban = success_embed("unban", target=target, reason="Appeal accepted")
-        self.assertIn("<@123>", ban.title)
-        self.assertEqual(ban.description, "> Reason: Reviewed")
-        self.assertIn("<@123>", unban.title)
-        self.assertEqual(unban.description, "> Reason: Appeal accepted")
+        self.assertIn("**<@123>**", ban.description)
+        self.assertIn("Reason: Reviewed", ban.description)
+        self.assertIn("**<@123>**", unban.description)
+        self.assertIn("Reason: Appeal accepted", unban.description)
 
     def test_tempban_embed_uses_the_parsed_duration(self) -> None:
         target = SimpleNamespace(id=123, mention="<@123>")
         embed = success_embed("tempban", target=target, reason="Spamming", duration="2 hours")
-        self.assertIn("<@123>", embed.title)
-        self.assertIn("> Duration: 2 hours", embed.description)
-        self.assertIn("> Reason: Spamming", embed.description)
+        self.assertIn("**<@123>**", embed.description)
+        self.assertIn("Duration: 2 hours", embed.description)
+        self.assertIn("Reason: Spamming", embed.description)
 
     def test_timeout_embed_uses_the_actual_duration(self) -> None:
         target = SimpleNamespace(id=123, mention="<@123>")
         embed = success_embed("timeout", target=target, reason="Spamming", duration="20 minutes")
-        self.assertIn("<@123>", embed.title)
-        self.assertIn("> Duration: 20 minutes", embed.description)
-        self.assertIn("> Reason: Spamming", embed.description)
+        self.assertIn("**<@123>**", embed.description)
+        self.assertIn("Duration: 20 minutes", embed.description)
+        self.assertIn("Reason: Spamming", embed.description)
 
-    def test_voice_success_embeds_include_the_custom_voice_marker(self) -> None:
+    def test_voice_success_embeds_use_the_shared_success_icon(self) -> None:
         for name in ("voicemute", "voiceunmute", "deafen", "undeafen", "disconnect", "move"):
             with self.subTest(command=name):
-                self.assertIn(emoji_markup("voice"), success_embed(name).title)
+                self.assertEqual(success_embed(name).description.count(emoji_markup("success")), 1)
 
     def test_massban_preview_uses_actual_target_count(self) -> None:
         confirmation = confirmation_embed("massban", count=3)
         success = success_embed("massban", count=2, total=3)
-        self.assertEqual(confirmation.description, "You are about to ban 3 members.")
-        self.assertIn("Banned 2 of 3 members", success.title)
+        self.assertIn("You are about to ban 3 members.", confirmation.description)
+        self.assertIn("Banned 2 of 3 members", success.description)
 
     def test_masskick_preview_uses_actual_target_count(self) -> None:
         confirmation = confirmation_embed("masskick", count=4)
         success = success_embed("masskick", count=3, total=4)
-        self.assertEqual(confirmation.description, "You are about to kick 4 members.")
-        self.assertIn("Kicked 3 of 4 members", success.title)
+        self.assertIn("You are about to kick 4 members.", confirmation.description)
+        self.assertIn("Kicked 3 of 4 members", success.description)
 
     def test_warning_embeds_show_actual_ids_counts_and_paginated_history(self) -> None:
         target = SimpleNamespace(id=123, mention="<@123>")
@@ -174,7 +182,7 @@ class ModerationEmbedTests(unittest.TestCase):
         warning_page = warning_list_embed(
             [warning], total=9, page=2, page_size=8, target=target
         )
-        self.assertIn("Warning list for <@123>", warning_page.title)
+        self.assertIn("Warning list for **<@123>**", warning_page.title)
         self.assertIn("Page: 2 of 2", warning_page.description)
         self.assertIn("<@50>", warning_page.fields[0].value)
         self.assertNotIn("@everyone", warning_page.fields[0].value)
@@ -191,15 +199,15 @@ class ModerationEmbedTests(unittest.TestCase):
         self.assertIn("Moderators with warnings: 3", stats.description)
 
         self.assertEqual(
-            success_embed("purge", count=7).title,
-            f"{emoji_markup('delete')} Successfully deleted 7 messages",
+            success_embed("purge", count=7).description,
+            f"{emoji_markup('success')} Deleted **7 messages**",
         )
-        self.assertIn("<@123>", success_embed("purgeuser", count=5, target=target).title)
-        self.assertIn("Deleted 2 bot messages", success_embed("purgebots", count=2).title)
-        self.assertIn("Deleted 3 human messages", success_embed("purgehumans", count=3).title)
-        self.assertIn("Deleted 4 messages containing links", success_embed("purgelinks", count=4).title)
+        self.assertIn("**<@123>**", success_embed("purgeuser", count=5, target=target).description)
+        self.assertIn("Deleted **2 bot messages**", success_embed("purgebots", count=2).description)
+        self.assertIn("Deleted **3 human messages**", success_embed("purgehumans", count=3).description)
+        self.assertIn("Deleted **4 messages** containing links", success_embed("purgelinks", count=4).description)
         self.assertIn(
-            "5 messages from <@123>",
+            "5 messages from **<@123>**",
             confirmation_embed("purgeuser", count=5, target=target).description,
         )
         self.assertIn(
@@ -210,7 +218,11 @@ class ModerationEmbedTests(unittest.TestCase):
     def test_custom_emoji_catalog_and_unknown_handling(self) -> None:
         self.assertEqual(len(EMOJI_IDS), 40)
         self.assertEqual(emoji_markup("success"), "<:success:1518658821650776225>")
+        self.assertEqual(emoji_for("success"), emoji_markup("success"))
+        self.assertEqual(emoji_for("success", object()), emoji_markup("success"))
+        self.assertEqual(emoji_for("information"), "")
         self.assertEqual(emoji_markup("not-a-configured-emoji"), "")
+        self.assertFalse(hasattr(emoji_manager_module, "UNICODE_FALLBACKS"))
 
 
 if __name__ == "__main__":

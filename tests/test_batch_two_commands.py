@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands
 
 from cogs.moderation.purge import PurgeCog, contains_link
+from core.emoji_manager import emoji_markup
 from cogs.moderation.warnings import WarningCog
 from database.repositories.moderation import ModerationWarning, WarningStats
 
@@ -201,10 +202,9 @@ class BatchTwoCommandTests(unittest.IsolatedAsyncioTestCase):
                     command = getattr(PurgeCog, name)
                     await command.callback(cog, ctx, *args, 2)
                     self.assertEqual(set(channel.deleted_ids), expected_ids)
-                    self.assertEqual(
-                        ctx.send.await_args.kwargs["embed"].description,
-                        None,
-                    )
+                    embed = ctx.send.await_args.kwargs["embed"]
+                    self.assertTrue(embed.description.startswith(emoji_markup("success")))
+                    self.assertIn("Deleted", embed.description)
 
     async def test_purge_excludes_invocation_and_deletes_old_messages_singly(self) -> None:
         cog = PurgeCog(self.bot)
@@ -228,7 +228,7 @@ class BatchTwoCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(channel.bulk_calls, [[51, 52]])
         old_message.delete.assert_awaited_once()
-        self.assertIn("Successfully deleted 3 messages", ctx.send.await_args.kwargs["embed"].title)
+        self.assertIn("Deleted **3 messages**", ctx.send.await_args.kwargs["embed"].description)
         confirmation.edit.assert_awaited_once_with(view=None)
 
     async def test_purge_cancel_and_invalid_count_never_delete(self) -> None:

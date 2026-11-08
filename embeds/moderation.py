@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import discord
 
-from core.emoji_manager import emoji_for
+from core.embed_manager import embed_manager
 from database.repositories.moderation import ModerationWarning, WarningStats
 
 
@@ -15,7 +15,6 @@ SUCCESS_COLOR = discord.Color(0x2ECC71)
 WARNING_COLOR = discord.Color(0xF1C40F)
 ERROR_COLOR = discord.Color(0xE74C3C)
 SAMPLE_USER = "<@111111111111111111>"
-VOICE_COMMANDS = {"voicemute", "voiceunmute", "deafen", "undeafen", "disconnect", "move"}
 PURGE_COMMANDS = {
     "purge", "purgeuser", "purgebots", "purgehumans", "purgelinks",
     "purgeinvites", "purgeimages", "purgefiles", "purgeembeds",
@@ -43,14 +42,14 @@ COMMAND_SPECS: dict[str, CommandPreviewSpec] = {
         "a!massban <user_ids...> [reason]",
         "Banned 5 members",
         "> Reason: Coordinated raid",
-        confirmation_title="Confirm massban",
+        confirmation_title="Are you sure you want to ban these members?",
         confirmation_description="You are about to ban 5 members.",
     ),
     "masskick": CommandPreviewSpec(
         "a!masskick <users...> [reason]",
         "Kicked 5 members",
         "> Reason: Coordinated disruption",
-        confirmation_title="Confirm masskick",
+        confirmation_title="Are you sure you want to kick these members?",
         confirmation_description="You are about to kick 5 members.",
     ),
     "timeout": CommandPreviewSpec("a!timeout <user> <duration> [reason]", f"Timed out {SAMPLE_USER}", "> Duration: 10 minutes\n> Reason: Spamming"),
@@ -70,7 +69,7 @@ COMMAND_SPECS: dict[str, CommandPreviewSpec] = {
         "a!clearwarnings <user>",
         f"Cleared warnings for {SAMPLE_USER}",
         "> Warnings removed: 2",
-        confirmation_title="Confirm clearing warnings",
+        confirmation_title="Are you sure you want to clear these warnings?",
         confirmation_description=f"You are about to clear all warnings for {SAMPLE_USER}.",
     ),
     "warninfo": CommandPreviewSpec("a!warninfo <warning_id>", "Warning #104", "> User: @Rexx\n> Reason: Spamming\n> Moderator: @Moderator", "moderation"),
@@ -78,37 +77,37 @@ COMMAND_SPECS: dict[str, CommandPreviewSpec] = {
     "warnstats": CommandPreviewSpec("a!warnstats", "Warning statistics", "> Active warnings: 12\n> Members warned: 8", "moderation"),
     "purge": CommandPreviewSpec(
         "a!purge <count>",
-        "Successfully deleted 50 messages",
+        "Deleted 50 messages",
         "",
         "delete",
-        "Confirm purge",
+        "Are you sure you want to delete matching messages?",
         "You are about to delete 50 matching messages.",
     ),
-    "purgeuser": CommandPreviewSpec("a!purgeuser <user> <count>", f"Deleted 25 messages from {SAMPLE_USER}", "", "delete", "Confirm purgeuser", f"You are about to delete 25 messages from {SAMPLE_USER}."),
-    "purgebots": CommandPreviewSpec("a!purgebots <count>", "Deleted 20 bot messages", "", "delete", "Confirm purgebots", "You are about to delete 20 bot messages."),
-    "purgehumans": CommandPreviewSpec("a!purgehumans <count>", "Deleted 20 human messages", "", "delete", "Confirm purgehumans", "You are about to delete 20 human messages."),
-    "purgelinks": CommandPreviewSpec("a!purgelinks <count>", "Deleted 10 messages containing links", "", "delete", "Confirm purgelinks", "You are about to delete 10 messages containing links."),
-    "purgeinvites": CommandPreviewSpec("a!purgeinvites <count>", "Deleted 10 messages containing invites", "", "delete", "Confirm purgeinvites", "You are about to delete 10 messages containing invites."),
-    "purgeimages": CommandPreviewSpec("a!purgeimages <count>", "Deleted 15 messages containing images", "", "delete", "Confirm purgeimages", "You are about to delete 15 messages containing images."),
-    "purgefiles": CommandPreviewSpec("a!purgefiles <count>", "Deleted 10 messages containing files", "", "delete", "Confirm purgefiles", "You are about to delete 10 messages containing files."),
-    "purgeembeds": CommandPreviewSpec("a!purgeembeds <count>", "Deleted 10 messages containing embeds", "", "delete", "Confirm purgeembeds", "You are about to delete 10 messages containing embeds."),
-    "purgementions": CommandPreviewSpec("a!purgementions <count>", "Deleted 10 messages containing mentions", "", "delete", "Confirm purgementions", "You are about to delete 10 messages containing mentions."),
-    "purgecontains": CommandPreviewSpec("a!purgecontains <text> <count>", 'Deleted 10 messages containing "spam"', "", "delete", "Confirm purgecontains", 'You are about to delete 10 messages containing "spam".'),
-    "purgeafter": CommandPreviewSpec("a!purgeafter <message_id>", "Deleted 18 messages after the selected message", "", "delete", "Confirm purgeafter", "You are about to delete 18 messages after the selected message."),
+    "purgeuser": CommandPreviewSpec("a!purgeuser <user> <count>", f"Deleted 25 messages from {SAMPLE_USER}", "", "delete", "Are you sure you want to delete this user's messages?", f"You are about to delete 25 messages from {SAMPLE_USER}."),
+    "purgebots": CommandPreviewSpec("a!purgebots <count>", "Deleted 20 bot messages", "", "delete", "Are you sure you want to delete bot messages?", "You are about to delete 20 bot messages."),
+    "purgehumans": CommandPreviewSpec("a!purgehumans <count>", "Deleted 20 human messages", "", "delete", "Are you sure you want to delete human messages?", "You are about to delete 20 human messages."),
+    "purgelinks": CommandPreviewSpec("a!purgelinks <count>", "Deleted 10 messages containing links", "", "delete", "Are you sure you want to delete messages with links?", "You are about to delete 10 messages containing links."),
+    "purgeinvites": CommandPreviewSpec("a!purgeinvites <count>", "Deleted 10 messages containing invites", "", "delete", "Are you sure you want to delete messages with invites?", "You are about to delete 10 messages containing invites."),
+    "purgeimages": CommandPreviewSpec("a!purgeimages <count>", "Deleted 15 messages containing images", "", "delete", "Are you sure you want to delete messages with images?", "You are about to delete 15 messages containing images."),
+    "purgefiles": CommandPreviewSpec("a!purgefiles <count>", "Deleted 10 messages containing files", "", "delete", "Are you sure you want to delete messages with files?", "You are about to delete 10 messages containing files."),
+    "purgeembeds": CommandPreviewSpec("a!purgeembeds <count>", "Deleted 10 messages containing embeds", "", "delete", "Are you sure you want to delete messages with embeds?", "You are about to delete 10 messages containing embeds."),
+    "purgementions": CommandPreviewSpec("a!purgementions <count>", "Deleted 10 messages containing mentions", "", "delete", "Are you sure you want to delete messages with mentions?", "You are about to delete 10 messages containing mentions."),
+    "purgecontains": CommandPreviewSpec("a!purgecontains <text> <count>", 'Deleted 10 messages containing "spam"', "", "delete", "Are you sure you want to delete matching messages?", 'You are about to delete 10 messages containing "spam".'),
+    "purgeafter": CommandPreviewSpec("a!purgeafter <message_id>", "Deleted 18 messages after the selected message", "", "delete", "Are you sure you want to delete later messages?", "You are about to delete 18 messages after the selected message."),
     "lock": CommandPreviewSpec("a!lock [channel] [reason]", "Locked #general", "> Reason: Scheduled maintenance"),
     "unlock": CommandPreviewSpec("a!unlock [channel] [reason]", "Unlocked #general", "> Reason: Maintenance complete"),
     "lockall": CommandPreviewSpec(
         "a!lockall",
         "Locked 12 text channels",
         "",
-        confirmation_title="Confirm lockall",
+        confirmation_title="Are you sure you want to lock every text channel?",
         confirmation_description="You are about to lock 12 text channels.",
     ),
     "unlockall": CommandPreviewSpec(
         "a!unlockall",
         "Unlocked 12 text channels",
         "",
-        confirmation_title="Confirm unlockall",
+        confirmation_title="Are you sure you want to unlock every text channel?",
         confirmation_description="You are about to unlock 12 text channels.",
     ),
     "slowmode": CommandPreviewSpec("a!slowmode <seconds> [channel]", "Set slowmode to 10 seconds in #general", ""),
@@ -172,7 +171,7 @@ def success_embed(
             title = title.replace("5 members", f"{count} members")
     if count is not None and command_name in PURGE_COMMANDS:
         if command_name == "purge":
-            title = f"Successfully deleted {count} messages"
+            title = f"Deleted {count} messages"
         elif command_name == "purgeuser":
             user_label = target.mention if target is not None else "the selected user"
             title = f"Deleted {count} messages from {user_label}"
@@ -235,16 +234,12 @@ def success_embed(
         description = f"> Previous roles restored: {restored_count or 0}"
         if skipped_count:
             description += f"\n> Roles skipped: {skipped_count}"
-    embed = discord.Embed(
-        title=(
-            f"{emoji_for(spec.emoji_name, guild)} {emoji_for('voice', guild)} {title}"
-            if command_name in VOICE_COMMANDS
-            else f"{emoji_for(spec.emoji_name, guild)} {title}"
-        ),
-        description=description or None,
+    return embed_manager.action(
+        message=title,
+        details=description,
+        emoji_names=("success",),
         color=SUCCESS_COLOR,
     )
-    return embed
 
 
 def confirmation_embed(
@@ -305,9 +300,10 @@ def confirmation_embed(
             description = f"You are about to delete {count} matching messages."
     if target is not None:
         description = description.replace(SAMPLE_USER, target.mention)
-    return discord.Embed(
-        title=f"{emoji_for('warning', guild)} {spec.confirmation_title}",
-        description=description,
+    return embed_manager.action(
+        message=spec.confirmation_title,
+        details=description,
+        emoji_names=("warning",),
         color=WARNING_COLOR,
     )
 
@@ -333,9 +329,10 @@ def warning_history_embeds(
         )
         if not warnings:
             description += "\n\nNo active warnings."
-        embed = discord.Embed(
-            title=f"{emoji_for('moderation', guild)} {title}",
+        embed = embed_manager.titled(
+            title=title,
             description=description,
+            emoji_names=("moderation",),
             color=SUCCESS_COLOR,
         )
         for warning in page_warnings:
@@ -346,7 +343,7 @@ def warning_history_embeds(
             reason = discord.utils.escape_mentions(warning.reason)
             embed.add_field(
                 name=f"Warning #{warning.warning_id} · <t:{timestamp}:R>",
-                value=f"Moderator: <@{warning.moderator_id}>\nReason: {reason}",
+                value=f"Moderator: **<@{warning.moderator_id}>**\nReason: {reason}",
                 inline=False,
             )
         embeds.append(embed)
@@ -370,9 +367,10 @@ def warning_list_embed(
     description = f"> Total warnings: {total}\n> Page: {page} of {page_count}"
     if not warnings:
         description += "\n\nNo warnings found."
-    embed = discord.Embed(
-        title=f"{emoji_for('moderation', guild)} Warning list{target_label}",
+    embed = embed_manager.titled(
+        title=f"Warning list{target_label}",
         description=description,
+        emoji_names=("moderation",),
         color=SUCCESS_COLOR,
     )
     for warning in warnings:
@@ -384,8 +382,8 @@ def warning_list_embed(
         embed.add_field(
             name=f"Warning #{warning.warning_id} · <t:{timestamp}:R>",
             value=(
-                f"User: <@{warning.target_id}>\n"
-                f"Moderator: <@{warning.moderator_id}>\n"
+                f"User: **<@{warning.target_id}>**\n"
+                f"Moderator: **<@{warning.moderator_id}>**\n"
                 f"Reason: {reason}"
             ),
             inline=False,
@@ -397,13 +395,14 @@ def warning_stats_embed(
     stats: WarningStats, *, guild: discord.Guild | None = None
 ) -> discord.Embed:
     """Build warning statistics from the repository's stored totals."""
-    return discord.Embed(
-        title=f"{emoji_for('moderation', guild)} Warning statistics",
+    return embed_manager.titled(
+        title="Warning statistics",
         description=(
             f"> Total warnings: {stats.total_warnings}\n"
             f"> Members warned: {stats.members_warned}\n"
             f"> Moderators with warnings: {stats.moderators_with_warnings}"
         ),
+        emoji_names=("moderation",),
         color=SUCCESS_COLOR,
     )
 
@@ -416,12 +415,13 @@ def warning_info_embed(
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     timestamp = int(created_at.timestamp())
-    embed = discord.Embed(
-        title=f"{emoji_for('information', guild)} Warning #{warning.warning_id}",
+    embed = embed_manager.titled(
+        title=f"Warning #{warning.warning_id}",
+        emoji_names=("moderation",),
         color=WARNING_COLOR,
     )
-    embed.add_field(name="Target user", value=f"<@{warning.target_id}>", inline=True)
-    embed.add_field(name="Moderator", value=f"<@{warning.moderator_id}>", inline=True)
+    embed.add_field(name="Target user", value=f"**<@{warning.target_id}>**", inline=True)
+    embed.add_field(name="Moderator", value=f"**<@{warning.moderator_id}>**", inline=True)
     embed.add_field(
         name="Timestamp",
         value=f"<t:{timestamp}:F> (<t:{timestamp}:R>)",
