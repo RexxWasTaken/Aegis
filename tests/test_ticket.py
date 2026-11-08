@@ -212,6 +212,77 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
             closed_at=None,
         )
 
+    async def test_reopen_restores_closed_permissions_when_database_update_fails(self) -> None:
+        repository = Mock()
+        repository.get_ticket_config = AsyncMock(
+            return_value=TicketConfig(10, 99, None, None)
+        )
+        repository.set_ticket_status = AsyncMock(side_effect=RuntimeError("db failed"))
+        manager = TicketManager(Mock(), repository)
+        manager.log_event = AsyncMock()
+        staff = _member(50, role_ids=(99,))
+        creator = _member(30)
+        guild = SimpleNamespace(get_member=lambda member_id: creator)
+        channel = Mock(spec=discord.TextChannel)
+        channel.guild = guild
+        overwrite = SimpleNamespace(
+            view_channel=True,
+            send_messages=False,
+            read_message_history=True,
+        )
+        channel.overwrites_for.return_value = overwrite
+        channel.set_permissions = AsyncMock()
+
+        with self.assertRaisesRegex(TicketManagerError, "previous channel permissions"):
+            await manager.reopen(
+                ticket=_ticket(status="closed"),
+                channel=channel,
+                actor=staff,
+            )
+
+        self.assertFalse(overwrite.send_messages)
+        self.assertEqual(channel.set_permissions.await_count, 2)
+        manager.log_event.assert_not_awaited()
+
+    async def test_failed_ticket_delete_restores_open_record_but_keeps_transcript(self) -> None:
+        repository = Mock()
+        repository.get_ticket_config = AsyncMock(
+            return_value=TicketConfig(10, 99, None, None)
+        )
+        closed = _ticket(status="closed")
+        repository.set_ticket_status = AsyncMock(
+            side_effect=[closed, _ticket(status="open")]
+        )
+        repository.save_ticket_transcript = AsyncMock()
+        manager = TicketManager(Mock(), repository)
+        manager.transcript_bytes = AsyncMock(return_value=b"complete transcript")
+        manager.log_event = AsyncMock()
+        channel = Mock(spec=discord.TextChannel)
+        channel.delete = AsyncMock(
+            side_effect=discord.HTTPException(
+                SimpleNamespace(status=500, reason="test failure"),
+                "delete failed",
+            )
+        )
+
+        with self.assertRaisesRegex(TicketManagerError, "open status and transcript"):
+            await manager.delete(
+                ticket=_ticket(),
+                channel=channel,
+                actor=_member(50, role_ids=(99,)),
+            )
+
+        repository.save_ticket_transcript.assert_awaited_once_with(
+            ticket_id=17,
+            transcript=b"complete transcript",
+        )
+        self.assertEqual(repository.set_ticket_status.await_count, 2)
+        self.assertEqual(
+            repository.set_ticket_status.await_args_list[1].kwargs["status"],
+            "open",
+        )
+        manager.log_event.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

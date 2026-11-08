@@ -226,8 +226,14 @@ class TicketManager:
         if ticket.status != "closed":
             raise TicketManagerError("This ticket is already open.")
         creator = channel.guild.get_member(ticket.creator_id)
+        original_permissions = None
         if creator is not None:
             overwrite = channel.overwrites_for(creator)
+            original_permissions = (
+                overwrite.view_channel,
+                overwrite.send_messages,
+                overwrite.read_message_history,
+            )
             overwrite.view_channel = True
             overwrite.send_messages = True
             overwrite.read_message_history = True
@@ -241,9 +247,32 @@ class TicketManager:
                 raise TicketManagerError(
                     "The ticket channel permissions could not be updated; it remains closed."
                 ) from exc
-        updated = await self.repository.set_ticket_status(
-            channel_id=ticket.channel_id, status="open", closed_at=None
-        )
+        try:
+            updated = await self.repository.set_ticket_status(
+                channel_id=ticket.channel_id, status="open", closed_at=None
+            )
+        except Exception as exc:
+            if creator is not None and original_permissions is not None:
+                (
+                    overwrite.view_channel,
+                    overwrite.send_messages,
+                    overwrite.read_message_history,
+                ) = original_permissions
+                try:
+                    await channel.set_permissions(
+                        creator,
+                        overwrite=overwrite,
+                        reason="AEGIS ticket reopen could not be persisted",
+                    )
+                except discord.HTTPException as rollback_error:
+                    raise TicketManagerError(
+                        "The ticket could not be reopened in the database, and its "
+                        "previous channel permissions could not be restored."
+                    ) from rollback_error
+            raise TicketManagerError(
+                "The ticket could not be reopened; its previous channel permissions "
+                "were restored."
+            ) from exc
         await self.log_event(
             ticket=updated,
             actor=actor,
@@ -322,7 +351,8 @@ class TicketManager:
             ticket_id=ticket.ticket_id,
             transcript=transcript,
         )
-        if ticket.status == "open":
+        original_ticket = ticket
+        if original_ticket.status == "open":
             ticket = await self.repository.set_ticket_status(
                 channel_id=ticket.channel_id,
                 status="closed",
@@ -333,8 +363,21 @@ class TicketManager:
         except discord.NotFound:
             pass
         except discord.HTTPException as exc:
+            if original_ticket.status == "open":
+                try:
+                    await self.repository.set_ticket_status(
+                        channel_id=original_ticket.channel_id,
+                        status=original_ticket.status,
+                        closed_at=original_ticket.closed_at,
+                    )
+                except Exception as rollback_error:
+                    raise TicketManagerError(
+                        "The ticket channel could not be deleted. Its transcript was "
+                        "saved, but the ticket status could not be restored."
+                    ) from rollback_error
             raise TicketManagerError(
-                "The ticket channel could not be deleted. Its record and transcript were kept."
+                "The ticket channel could not be deleted. Its open status and transcript "
+                "were restored."
             ) from exc
         await self.log_event(
             ticket=ticket,
