@@ -96,7 +96,10 @@ class ModerationRepository:
         expires_at: str | None = None,
     ) -> ModerationCase:
         if action_type not in {
-            "ban", "unban", "softban", "tempban", "kick", "massban", "masskick"
+            "ban", "unban", "softban", "tempban", "kick", "massban", "masskick",
+            "timeout", "untimeout", "mute", "unmute",
+            "voicemute", "voiceunmute",
+            "deafen", "undeafen",
         }:
             raise ValueError("Unsupported moderation action for this repository method.")
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")

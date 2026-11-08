@@ -99,6 +99,47 @@ class ModerationPermissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ModerationTargetError, "server owner"):
             validate_kick_target(self.guild, owner, self.moderator, self.bot)
 
+    def test_timeout_requires_moderate_members(self) -> None:
+        from core.permissions import validate_timeout_target
+
+        self.moderator.guild_permissions.moderate_members = True
+        self.bot.guild_permissions.moderate_members = True
+        validate_timeout_target(self.guild, self.target, self.moderator, self.bot)
+        self.moderator.guild_permissions.moderate_members = False
+        with self.assertRaisesRegex(ModerationPermissionError, "Moderate Members"):
+            validate_timeout_target(self.guild, self.target, self.moderator, self.bot)
+
+    def test_voice_actions_require_mute_members_and_share_hierarchy_checks(self) -> None:
+        from core.permissions import validate_voice_target
+
+        self.moderator.guild_permissions.mute_members = True
+        self.bot.guild_permissions.mute_members = True
+        validate_voice_target(
+            self.guild,
+            self.target,
+            self.moderator,
+            self.bot,
+            action="voicemute",
+        )
+        self.bot.guild_permissions.mute_members = False
+        with self.assertRaisesRegex(ModerationPermissionError, "bot needs the Mute Members"):
+            validate_voice_target(
+                self.guild,
+                self.target,
+                self.moderator,
+                self.bot,
+                action="voiceunmute",
+            )
+        self.moderator.guild_permissions.deafen_members = True
+        self.bot.guild_permissions.deafen_members = True
+        validate_voice_target(
+            self.guild,
+            self.target,
+            self.moderator,
+            self.bot,
+            action="deafen",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

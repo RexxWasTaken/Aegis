@@ -96,6 +96,18 @@ class ModerationEmbedTests(unittest.TestCase):
         self.assertIn("> Duration: 2 hours", embed.description)
         self.assertIn("> Reason: Spamming", embed.description)
 
+    def test_timeout_embed_uses_the_actual_duration(self) -> None:
+        target = SimpleNamespace(id=123, mention="<@123>")
+        embed = success_embed("timeout", target=target, reason="Spamming", duration="20 minutes")
+        self.assertIn("<@123>", embed.title)
+        self.assertIn("> Duration: 20 minutes", embed.description)
+        self.assertIn("> Reason: Spamming", embed.description)
+
+    def test_voice_success_embeds_include_the_custom_voice_marker(self) -> None:
+        for name in ("voicemute", "voiceunmute", "deafen", "undeafen", "disconnect", "move"):
+            with self.subTest(command=name):
+                self.assertIn(emoji_markup("voice"), success_embed(name).title)
+
     def test_massban_preview_uses_actual_target_count(self) -> None:
         confirmation = confirmation_embed("massban", count=3)
         success = success_embed("massban", count=2, total=3)

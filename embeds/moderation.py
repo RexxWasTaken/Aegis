@@ -13,6 +13,7 @@ SUCCESS_COLOR = discord.Color(0x2ECC71)
 WARNING_COLOR = discord.Color(0xF1C40F)
 ERROR_COLOR = discord.Color(0xE74C3C)
 SAMPLE_USER = "<@111111111111111111>"
+VOICE_COMMANDS = {"voicemute", "voiceunmute", "deafen", "undeafen", "disconnect", "move"}
 
 
 @dataclass(frozen=True)
@@ -140,15 +141,24 @@ def success_embed(
             description = description.rsplit("> Reason: ", 1)[0] + f"> Reason: {safe_reason}"
         elif command_name in {"ban", "unban"}:
             description = f"> Reason: {safe_reason}"
-    if duration is not None and "> Duration: " in description:
-        description = description.replace("> Duration: 1 day", f"> Duration: {duration}")
+    if duration is not None and description:
+        lines = description.splitlines()
+        for index, line in enumerate(lines):
+            if line.startswith("> Duration: "):
+                lines[index] = f"> Duration: {duration}"
+                break
+        description = "\n".join(lines)
     if count is not None and command_name in {"massban", "masskick"}:
         if total is not None and count < total:
             title = title.replace("5 members", f"{count} of {total} members")
         else:
             title = title.replace("5 members", f"{count} members")
     embed = discord.Embed(
-        title=f"{emoji_markup(spec.emoji_name)} {title}",
+        title=(
+            f"{emoji_markup(spec.emoji_name)} {emoji_markup('voice')} {title}"
+            if command_name in VOICE_COMMANDS
+            else f"{emoji_markup(spec.emoji_name)} {title}"
+        ),
         description=description or None,
         color=SUCCESS_COLOR,
     )

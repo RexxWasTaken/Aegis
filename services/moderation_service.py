@@ -13,7 +13,9 @@ from core.permissions import (
     ModerationTargetError,
     validate_ban_target,
     validate_kick_target,
+    validate_timeout_target,
     validate_unban_target,
+    validate_voice_target,
 )
 from database.repositories.moderation import ModerationCase, ModerationRepository
 
@@ -243,6 +245,200 @@ class ModerationService:
             completed_target_ids=tuple(completed),
             failed_target_ids=tuple(failed),
         )
+
+    async def timeout_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        duration: timedelta,
+        reason: str | None = None,
+        action_type: str = "timeout",
+    ) -> ModerationCase:
+        validate_timeout_target(guild, target, moderator, bot_member)
+        if duration.total_seconds() <= 0 or duration > timedelta(days=28):
+            raise ModerationTargetError("Timeout duration must be between 1 second and 28 days.")
+        normalized_reason = normalize_reason(reason)
+        expires_at = (datetime.now(timezone.utc) + duration).isoformat(timespec="seconds")
+        if action_type not in {"timeout", "mute"}:
+            raise ValueError("Invalid timeout action type.")
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type=action_type,
+            reason=normalized_reason,
+            expires_at=expires_at,
+        )
+        try:
+            await target.timeout(
+                duration,
+                reason=f"Case #{case.case_id}: {normalized_reason}"[:512],
+            )
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def untimeout_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+        action_type: str = "untimeout",
+    ) -> ModerationCase:
+        validate_timeout_target(guild, target, moderator, bot_member)
+        if action_type not in {"untimeout", "unmute"}:
+            raise ValueError("Invalid timeout removal action type.")
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type=action_type,
+            reason=normalized_reason,
+        )
+        try:
+            await target.timeout(
+                None,
+                reason=f"Case #{case.case_id}: {normalized_reason}"[:512],
+            )
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def voicemute_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_voice_target(
+            guild, target, moderator, bot_member, action="voicemute"
+        )
+        if target.voice is None or target.voice.channel is None:
+            raise ModerationTargetError("The target must be connected to a voice channel.")
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="voicemute",
+            reason=normalized_reason,
+        )
+        try:
+            await target.edit(mute=True, reason=f"Case #{case.case_id}: {normalized_reason}"[:512])
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def voiceunmute_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_voice_target(
+            guild, target, moderator, bot_member, action="voiceunmute"
+        )
+        if target.voice is None or target.voice.channel is None:
+            raise ModerationTargetError("The target must be connected to a voice channel.")
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="voiceunmute",
+            reason=normalized_reason,
+        )
+        try:
+            await target.edit(
+                mute=False,
+                reason=f"Case #{case.case_id}: {normalized_reason}"[:512],
+            )
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def deafen_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_voice_target(guild, target, moderator, bot_member, action="deafen")
+        if target.voice is None or target.voice.channel is None:
+            raise ModerationTargetError("The target must be connected to a voice channel.")
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="deafen",
+            reason=normalized_reason,
+        )
+        try:
+            await target.edit(
+                deafen=True,
+                reason=f"Case #{case.case_id}: {normalized_reason}"[:512],
+            )
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
+
+    async def undeafen_member(
+        self,
+        *,
+        guild: discord.Guild,
+        target: discord.Member,
+        moderator: discord.Member,
+        bot_member: discord.Member,
+        reason: str | None = None,
+    ) -> ModerationCase:
+        validate_voice_target(guild, target, moderator, bot_member, action="undeafen")
+        if target.voice is None or target.voice.channel is None:
+            raise ModerationTargetError("The target must be connected to a voice channel.")
+        normalized_reason = normalize_reason(reason)
+        case = await self.repository.create_case(
+            guild_id=guild.id,
+            target_id=target.id,
+            moderator_id=moderator.id,
+            action_type="undeafen",
+            reason=normalized_reason,
+        )
+        try:
+            await target.edit(
+                deafen=False,
+                reason=f"Case #{case.case_id}: {normalized_reason}"[:512],
+            )
+        except Exception:
+            await self._mark_failed(case.case_id)
+            raise
+        await self._mark_completed(case.case_id)
+        return case
 
     async def softban_member(
         self,

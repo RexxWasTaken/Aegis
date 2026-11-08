@@ -52,6 +52,8 @@ class ModerationServiceTests(unittest.IsolatedAsyncioTestCase):
             top_role=SimpleNamespace(position=2),
             ban=AsyncMock(),
             kick=AsyncMock(),
+            timeout=AsyncMock(),
+            edit=AsyncMock(),
         )
         self.repository = SimpleNamespace(
             create_case=AsyncMock(return_value=case_record()),
@@ -320,6 +322,139 @@ class ModerationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.target.kick.assert_awaited_once_with(reason="Case #7: Raid")
         self.repository.update_case_status.assert_any_await(7, "completed")
         self.repository.update_case_status.assert_any_await(8, "failed")
+
+    async def test_timeout_records_expiry_and_calls_discord(self) -> None:
+        self.moderator.guild_permissions.moderate_members = True
+        self.bot_member.guild_permissions.moderate_members = True
+        await self.service.timeout_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            duration=timedelta(minutes=10),
+            reason="Spamming",
+        )
+        args = self.repository.create_case.await_args.kwargs
+        self.assertEqual(args["action_type"], "timeout")
+        self.assertIsNotNone(args["expires_at"])
+        self.target.timeout.assert_awaited_once_with(
+            timedelta(minutes=10),
+            reason="Case #7: Spamming",
+        )
+        self.repository.update_case_status.assert_awaited_once_with(7, "completed")
+
+    async def test_untimeout_clears_timeout_and_records_case(self) -> None:
+        self.moderator.guild_permissions.moderate_members = True
+        self.bot_member.guild_permissions.moderate_members = True
+        self.repository.create_case.return_value = case_record("untimeout")
+        await self.service.untimeout_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            reason="Reviewed",
+        )
+        self.repository.create_case.assert_awaited_once_with(
+            guild_id=1,
+            target_id=30,
+            moderator_id=10,
+            action_type="untimeout",
+            reason="Reviewed",
+        )
+        self.target.timeout.assert_awaited_once_with(
+            None,
+            reason="Case #7: Reviewed",
+        )
+
+    async def test_mute_and_unmute_keep_distinct_audit_action_types(self) -> None:
+        self.moderator.guild_permissions.moderate_members = True
+        self.bot_member.guild_permissions.moderate_members = True
+        await self.service.timeout_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            duration=timedelta(minutes=10),
+            reason="Spamming",
+            action_type="mute",
+        )
+        self.assertEqual(
+            self.repository.create_case.await_args.kwargs["action_type"],
+            "mute",
+        )
+        self.repository.create_case.reset_mock()
+        self.repository.update_case_status.reset_mock()
+        await self.service.untimeout_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            reason="Reviewed",
+            action_type="unmute",
+        )
+        self.assertEqual(
+            self.repository.create_case.await_args.kwargs["action_type"],
+            "unmute",
+        )
+
+    async def test_voice_mute_and_unmute_require_voice_and_record_cases(self) -> None:
+        self.moderator.guild_permissions.mute_members = True
+        self.bot_member.guild_permissions.mute_members = True
+        self.target.voice = SimpleNamespace(channel=object())
+        await self.service.voicemute_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            reason="Disrupting voice chat",
+        )
+        self.target.edit.assert_awaited_once_with(
+            mute=True,
+            reason="Case #7: Disrupting voice chat",
+        )
+        self.assertEqual(
+            self.repository.create_case.await_args.kwargs["action_type"],
+            "voicemute",
+        )
+
+        self.repository.create_case.reset_mock()
+        self.repository.update_case_status.reset_mock()
+        self.target.edit.reset_mock()
+        await self.service.voiceunmute_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            reason="Reviewed",
+        )
+        self.target.edit.assert_awaited_once_with(
+            mute=False,
+            reason="Case #7: Reviewed",
+        )
+        self.assertEqual(
+            self.repository.create_case.await_args.kwargs["action_type"],
+            "voiceunmute",
+        )
+
+    async def test_deafen_applies_to_connected_voice_member(self) -> None:
+        self.moderator.guild_permissions.deafen_members = True
+        self.bot_member.guild_permissions.deafen_members = True
+        self.target.voice = SimpleNamespace(channel=object())
+        await self.service.deafen_member(
+            guild=self.guild,
+            target=self.target,
+            moderator=self.moderator,
+            bot_member=self.bot_member,
+            reason="Voice disruption",
+        )
+        self.target.edit.assert_awaited_once_with(
+            deafen=True,
+            reason="Case #7: Voice disruption",
+        )
+        self.assertEqual(
+            self.repository.create_case.await_args.kwargs["action_type"],
+            "deafen",
+        )
 
 
 if __name__ == "__main__":
