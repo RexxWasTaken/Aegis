@@ -6,7 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import discord
-from database.repositories.moderation import ModerationCase, ModerationWarning
+from database.repositories.moderation import (
+    ModerationCase,
+    ModerationWarning,
+    WarningStats,
+)
 from services.moderation_service import (
     AuditLogError,
     ModerationService,
@@ -73,6 +77,14 @@ class ModerationServiceTests(unittest.IsolatedAsyncioTestCase):
             update_case_status=AsyncMock(),
             create_warning=AsyncMock(return_value=warning_record()),
             list_warnings=AsyncMock(return_value=[warning_record()]),
+            list_warning_page=AsyncMock(return_value=([warning_record()], 1)),
+            get_warning_stats=AsyncMock(
+                return_value=WarningStats(
+                    total_warnings=3,
+                    members_warned=2,
+                    moderators_with_warnings=1,
+                )
+            ),
             delete_warning=AsyncMock(return_value=warning_record()),
             clear_warnings=AsyncMock(return_value=1),
         )
@@ -608,6 +620,27 @@ class ModerationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.repository.delete_warning.assert_awaited_once_with(
             guild_id=1, target_id=30, warning_id=999
         )
+
+    async def test_warnlist_and_warnstats_use_guild_scoped_warning_data(self) -> None:
+        self.moderator.guild_permissions.manage_messages = True
+        records, total = await self.service.warning_page(
+            guild=self.guild,
+            moderator=self.moderator,
+            target=None,
+            limit=8,
+            offset=0,
+        )
+        self.assertEqual(records, [warning_record()])
+        self.assertEqual(total, 1)
+        self.repository.list_warning_page.assert_awaited_once_with(
+            guild_id=1, target_id=None, limit=8, offset=0
+        )
+
+        stats = await self.service.warning_statistics(
+            guild=self.guild, moderator=self.moderator
+        )
+        self.assertEqual(stats.total_warnings, 3)
+        self.repository.get_warning_stats.assert_awaited_once_with(guild_id=1)
 
 
 if __name__ == "__main__":

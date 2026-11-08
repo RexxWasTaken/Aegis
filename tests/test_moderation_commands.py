@@ -9,7 +9,7 @@ from core.bot import AegisBot
 
 
 class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_moderation_extensions_register_first_twenty_one_commands_and_aliases(self) -> None:
+    async def test_moderation_extensions_register_first_twenty_eight_commands_and_aliases(self) -> None:
         bot = commands.Bot(
             command_prefix="a!",
             intents=discord.Intents.none(),
@@ -22,6 +22,7 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
             await bot.load_extension("cogs.moderation.timeouts")
             await bot.load_extension("cogs.moderation.voice_moderation")
             await bot.load_extension("cogs.moderation.warnings")
+            await bot.load_extension("cogs.moderation.purge")
             self.assertEqual(
                 {command.name for command in bot.commands},
                 {
@@ -29,7 +30,8 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                     "masskick", "timeout", "untimeout", "mute", "unmute",
                     "voicemute", "voiceunmute", "deafen", "undeafen",
                     "disconnect", "move", "warn", "unwarn", "warnings",
-                    "clearwarnings",
+                    "clearwarnings", "warnlist", "warnstats", "purge",
+                    "purgeuser", "purgebots", "purgehumans", "purgelinks",
                 },
             )
             registered_names = [
@@ -59,7 +61,8 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                     "masskick", "timeout", "untimeout", "mute", "unmute",
                     "voicemute", "voiceunmute", "deafen", "undeafen",
                     "disconnect", "move", "warn", "unwarn", "warnings",
-                    "clearwarnings",
+                    "clearwarnings", "warnlist", "warnstats", "purge",
+                    "purgeuser", "purgebots", "purgehumans", "purgelinks",
                 },
             )
             self.assertIsNotNone(bot.tempban_expiry_task)

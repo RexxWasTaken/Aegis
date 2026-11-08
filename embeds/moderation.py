@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import discord
 
 from core.emoji_manager import emoji_markup
-from database.repositories.moderation import ModerationWarning
+from database.repositories.moderation import ModerationWarning, WarningStats
 
 
 SUCCESS_COLOR = discord.Color(0x2ECC71)
@@ -16,6 +16,7 @@ WARNING_COLOR = discord.Color(0xF1C40F)
 ERROR_COLOR = discord.Color(0xE74C3C)
 SAMPLE_USER = "<@111111111111111111>"
 VOICE_COMMANDS = {"voicemute", "voiceunmute", "deafen", "undeafen", "disconnect", "move"}
+PURGE_COMMANDS = {"purge", "purgeuser", "purgebots", "purgehumans", "purgelinks"}
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,18 @@ def success_embed(
             title = title.replace("5 members", f"{count} of {total} members")
         else:
             title = title.replace("5 members", f"{count} members")
+    if count is not None and command_name in PURGE_COMMANDS:
+        if command_name == "purge":
+            title = f"Successfully deleted {count} messages"
+        elif command_name == "purgeuser":
+            user_label = target.mention if target is not None else "the selected user"
+            title = f"Deleted {count} messages from {user_label}"
+        elif command_name == "purgebots":
+            title = f"Deleted {count} bot messages"
+        elif command_name == "purgehumans":
+            title = f"Deleted {count} human messages"
+        else:
+            title = f"Deleted {count} messages containing links"
     if command_name == "unwarn" and warning_id is not None:
         description = f"> Warning removed: #{warning_id}"
     elif command_name == "warn" and warning_id is not None and description:
@@ -204,6 +217,18 @@ def confirmation_embed(
         description = (
             f"You are about to permanently remove {count} warning(s) from {target_label}."
         )
+    elif count is not None and command_name in PURGE_COMMANDS:
+        if command_name == "purgeuser":
+            target_label = target.mention if target is not None else "the selected user"
+            description = f"You are about to delete {count} messages from {target_label}."
+        elif command_name == "purgebots":
+            description = f"You are about to delete {count} bot messages."
+        elif command_name == "purgehumans":
+            description = f"You are about to delete {count} human messages."
+        elif command_name == "purgelinks":
+            description = f"You are about to delete {count} messages containing links."
+        else:
+            description = f"You are about to delete {count} matching messages."
     if target is not None:
         description = description.replace(SAMPLE_USER, target.mention)
     return discord.Embed(
@@ -251,3 +276,55 @@ def warning_history_embeds(
             )
         embeds.append(embed)
     return embeds
+
+
+def warning_list_embed(
+    warnings: list[ModerationWarning],
+    *,
+    total: int,
+    page: int,
+    page_size: int,
+    target: discord.abc.User | None = None,
+) -> discord.Embed:
+    """Build one bounded server or member warning-list page."""
+    page_count = max(1, (total + page_size - 1) // page_size)
+    if not 1 <= page <= page_count:
+        raise ValueError("Warning list page is outside the available range.")
+    target_label = f" for {target.mention}" if target is not None else " in this server"
+    description = f"> Total warnings: {total}\n> Page: {page} of {page_count}"
+    if not warnings:
+        description += "\n\nNo warnings found."
+    embed = discord.Embed(
+        title=f"{emoji_markup('moderation')} Warning list{target_label}",
+        description=description,
+        color=SUCCESS_COLOR,
+    )
+    for warning in warnings:
+        created_at = datetime.fromisoformat(warning.created_at)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        timestamp = int(created_at.timestamp())
+        reason = discord.utils.escape_mentions(warning.reason)
+        embed.add_field(
+            name=f"Warning #{warning.warning_id} · <t:{timestamp}:R>",
+            value=(
+                f"User: <@{warning.target_id}>\n"
+                f"Moderator: <@{warning.moderator_id}>\n"
+                f"Reason: {reason}"
+            ),
+            inline=False,
+        )
+    return embed
+
+
+def warning_stats_embed(stats: WarningStats) -> discord.Embed:
+    """Build warning statistics from the repository's stored totals."""
+    return discord.Embed(
+        title=f"{emoji_markup('moderation')} Warning statistics",
+        description=(
+            f"> Total warnings: {stats.total_warnings}\n"
+            f"> Members warned: {stats.members_warned}\n"
+            f"> Moderators with warnings: {stats.moderators_with_warnings}"
+        ),
+        color=SUCCESS_COLOR,
+    )

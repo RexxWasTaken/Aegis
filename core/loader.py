@@ -11,6 +11,7 @@ MODERATION_EXTENSIONS = (
     "cogs.moderation.timeouts",
     "cogs.moderation.voice_moderation",
     "cogs.moderation.warnings",
+    "cogs.moderation.purge",
 )
 
 

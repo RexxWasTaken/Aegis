@@ -15,12 +15,14 @@ from types import SimpleNamespace
 import discord
 
 from core.emoji_manager import EMOJI_IDS
-from database.repositories.moderation import ModerationWarning
+from database.repositories.moderation import ModerationWarning, WarningStats
 from embeds.moderation import (
     COMMAND_SPECS,
     confirmation_embed,
     success_embed,
     warning_history_embeds,
+    warning_list_embed,
+    warning_stats_embed,
 )
 from embeds.moderation_errors import missing_permissions_embed, wrong_usage_embed
 
@@ -46,6 +48,18 @@ SAMPLE_WARNINGS = [
         created_at="2025-12-15T00:00:00+00:00",
     ),
 ]
+SAMPLE_STATS = WarningStats(
+    total_warnings=12,
+    members_warned=8,
+    moderators_with_warnings=3,
+)
+SAMPLE_PURGE_COUNTS = {
+    "purge": 50,
+    "purgeuser": 25,
+    "purgebots": 20,
+    "purgehumans": 20,
+    "purgelinks": 10,
+}
 
 
 class PreviewConfirmationView(discord.ui.View):
@@ -122,12 +136,22 @@ def render_page() -> str:
     for name, spec in COMMAND_SPECS.items():
         if name == "warnings":
             success = warning_history_embeds(SAMPLE_USER, SAMPLE_WARNINGS)[0]
+        elif name == "warnlist":
+            success = warning_list_embed(
+                SAMPLE_WARNINGS, total=12, page=1, page_size=8, target=SAMPLE_USER
+            )
+        elif name == "warnstats":
+            success = warning_stats_embed(SAMPLE_STATS)
         else:
             success = success_embed(
                 name,
                 warning_id=104 if name in {"warn", "unwarn"} else None,
-                count=2 if name == "clearwarnings" else None,
-                target=SAMPLE_USER if name == "clearwarnings" else None,
+                count=(
+                    2 if name == "clearwarnings" else SAMPLE_PURGE_COUNTS.get(name)
+                ),
+                target=(
+                    SAMPLE_USER if name in {"clearwarnings", "purgeuser"} else None
+                ),
             )
         cases = [
             render_embed(success, "Success"),
@@ -139,8 +163,14 @@ def render_page() -> str:
                 render_embed(
                     confirmation_embed(
                         name,
-                        count=2 if name == "clearwarnings" else None,
-                        target=SAMPLE_USER if name == "clearwarnings" else None,
+                        count=(
+                            2 if name == "clearwarnings" else SAMPLE_PURGE_COUNTS.get(name)
+                        ),
+                        target=(
+                            SAMPLE_USER
+                            if name in {"clearwarnings", "purgeuser"}
+                            else None
+                        ),
                     ),
                     "Confirmation",
                     PreviewConfirmationView(),

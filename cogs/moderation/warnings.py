@@ -11,6 +11,8 @@ from embeds.moderation import (
     confirmation_embed,
     success_embed,
     warning_history_embeds,
+    warning_list_embed,
+    warning_stats_embed,
 )
 from embeds.moderation_errors import operation_error_embed
 from services.moderation_service import ModerationService
@@ -37,6 +39,76 @@ class WarningHistoryView(discord.ui.View):
         self.page = (self.page + offset) % len(self.pages)
         await interaction.response.edit_message(
             embed=self.pages[self.page], view=self
+        )
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+    async def previous(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self._show_page(interaction, -1)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self._show_page(interaction, 1)
+
+
+class WarningListView(discord.ui.View):
+    """Author-only, database-backed pagination for the guild warning list."""
+
+    def __init__(
+        self,
+        *,
+        author_id: int,
+        service: ModerationService,
+        guild: discord.Guild,
+        moderator: discord.Member,
+        target: discord.Member | None,
+        total: int,
+        page_size: int,
+    ) -> None:
+        super().__init__(timeout=120)
+        self.author_id = author_id
+        self.service = service
+        self.guild = guild
+        self.moderator = moderator
+        self.target = target
+        self.total = total
+        self.page_size = page_size
+        self.page = 1
+
+    async def _show_page(
+        self, interaction: discord.Interaction, offset: int
+    ) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "Only the moderator who requested this list can turn its pages.",
+                ephemeral=True,
+            )
+            return
+        page_count = max(1, (self.total + self.page_size - 1) // self.page_size)
+        self.page = ((self.page - 1 + offset) % page_count) + 1
+        records, _ = await self.service.warning_page(
+            guild=self.guild,
+            moderator=self.moderator,
+            target=self.target,
+            limit=self.page_size,
+            offset=(self.page - 1) * self.page_size,
+        )
+        await interaction.response.edit_message(
+            embed=warning_list_embed(
+                records,
+                total=self.total,
+                page=self.page,
+                page_size=self.page_size,
+                target=self.target,
+            ),
+            view=self,
         )
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
@@ -138,6 +210,63 @@ class WarningCog(commands.Cog):
         await ctx.send(
             embed=pages[0],
             view=view,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @commands.command(name="warnlist")
+    @commands.guild_only()
+    @has_guild_permission("manage_messages")
+    async def warnlist(
+        self,
+        ctx: commands.Context,
+        target: discord.Member | None = None,
+    ) -> None:
+        """Browse this server's warnings, optionally limited to one member."""
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        service = self._service()
+        page_size = 8
+        records, total = await service.warning_page(
+            guild=ctx.guild,
+            moderator=ctx.author,
+            target=target,
+            limit=page_size,
+            offset=0,
+        )
+        view = (
+            WarningListView(
+                author_id=ctx.author.id,
+                service=service,
+                guild=ctx.guild,
+                moderator=ctx.author,
+                target=target,
+                total=total,
+                page_size=page_size,
+            )
+            if total > page_size
+            else None
+        )
+        await ctx.send(
+            embed=warning_list_embed(
+                records, total=total, page=1, page_size=page_size, target=target
+            ),
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @commands.command(name="warnstats")
+    @commands.guild_only()
+    @has_guild_permission("manage_messages")
+    async def warnstats(self, ctx: commands.Context) -> None:
+        """Summarize actual stored warning data for this server."""
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        stats = await self._service().warning_statistics(
+            guild=ctx.guild,
+            moderator=ctx.author,
+        )
+        await ctx.send(
+            embed=warning_stats_embed(stats),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
