@@ -21,21 +21,31 @@ from embeds.ticket import ticket_panel_embed
 
 class CommunityUiTests(unittest.IsolatedAsyncioTestCase):
     def test_help_home_and_ticket_panel_use_required_custom_emojis(self) -> None:
-        help_embed = help_front_page(
-            prefix_count=10,
-            slash_count=5,
-            category_counts={"Ticket": 7, "Giveaway": 8, "Moderation": 45},
+        help_embed = help_front_page(["Moderation", "Ticket", "Giveaway"])
+        self.assertEqual(help_embed.title, "Welcome to AEGIS!")
+        self.assertEqual(
+            help_embed.description,
+            "Your ultimate versatile Discord bot.\n"
+            "Use the dropdown menus below to explore command categories.",
         )
-        self.assertIn(f"{emoji_markup('ticket')} **Ticket**", help_embed.description)
-        self.assertIn(f"{emoji_markup('giveaway')} **Giveaway**", help_embed.description)
+        category_list = help_embed.fields[0].value
+        self.assertEqual(
+            category_list.splitlines(),
+            [
+                f"{emoji_markup('moderation')} Moderation",
+                f"{emoji_markup('ticket')} Ticket",
+                f"{emoji_markup('giveaway')} Giveaway",
+            ],
+        )
 
         panel = ticket_panel_embed()
+        self.assertIsNone(panel.title)
         self.assertEqual(
-            panel.title,
-            "<:ticket:1518658831360589875> AEGIS SUPPORT CENTER",
+            panel.description,
+            "Make Ticket For Complains Here\n\n"
+            "To create a ticket, select an issue from the dropdown below.\n\n"
+            f"{emoji_markup('ticket')} AEGIS Support",
         )
-        self.assertIn("Make a Ticket Here", panel.description)
-        self.assertIn("What's The Issue?", panel.footer.text)
 
     def test_giveaway_embed_uses_custom_reaction_and_never_unicode_confetti(self) -> None:
         host = SimpleNamespace(id=10, mention="<@10>")

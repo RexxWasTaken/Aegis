@@ -3,18 +3,41 @@
 from __future__ import annotations
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
-from core.help_view import HelpView
+from core.emoji_manager import emoji_markup
+from core.help_view import HelpView, find_command, send_command_details
+from embeds.help import HELP_COLOR
 
 
 class HelpCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @commands.hybrid_command(name="help", description="Browse AEGIS commands by category.")
-    async def help(self, ctx: commands.Context) -> None:
-        """Open the interactive AEGIS Help center."""
+    @commands.hybrid_command(
+        name="help",
+        description="Browse registered AEGIS commands or inspect one command.",
+    )
+    @app_commands.describe(command="A registered command name or prefix alias.")
+    async def help(self, ctx: commands.Context, *, command: str | None = None) -> None:
+        """Open Help or show details for a registered command or alias."""
+        if command:
+            info = find_command(self.bot, command)
+            if info is None:
+                embed = discord.Embed(
+                    title=f"{emoji_markup('error')} Command not found",
+                    description="That command or alias is not registered.",
+                    color=HELP_COLOR,
+                )
+                if ctx.interaction is not None:
+                    await ctx.send(embed=embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=embed)
+                return
+            await send_command_details(ctx, info)
+            return
+
         view = HelpView(self.bot, ctx.author.id)
         embed, _ = view._page_data()
         try:
@@ -24,8 +47,8 @@ class HelpCog(commands.Cog):
                 message = await ctx.send(embed=embed, view=view)
         except discord.HTTPException:
             message_text = (
-                "The Help menu could not be displayed. Check access to the AEGIS "
-                "Ticket and Giveaway custom emojis; no Unicode replacement is used."
+                f"{emoji_markup('error')} The Help menu could not be displayed. "
+                "Check access to the configured custom emojis and try again."
             )
             if ctx.interaction is None:
                 await ctx.send(message_text)
