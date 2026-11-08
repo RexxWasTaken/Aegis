@@ -1,4 +1,4 @@
-"""Moderation extension loading."""
+"""Moderation and community extension loading."""
 
 from __future__ import annotations
 
@@ -17,7 +17,13 @@ MODERATION_EXTENSIONS = (
     "cogs.moderation.jail",
 )
 
+COMMUNITY_EXTENSIONS = (
+    "cogs.ticket",
+    "cogs.giveaway",
+    "cogs.help",
+)
+
 
 async def load_extensions(bot: commands.Bot) -> None:
-    for extension in MODERATION_EXTENSIONS:
+    for extension in (*MODERATION_EXTENSIONS, *COMMUNITY_EXTENSIONS):
         await bot.load_extension(extension)
