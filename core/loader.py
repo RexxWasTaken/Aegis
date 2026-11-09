@@ -27,6 +27,7 @@ COMMUNITY_EXTENSIONS = (
     "cogs.information",
     "cogs.fun",
     "cogs.voice",
+    "cogs.games",
     "cogs.welcome",
     "cogs.reaction_roles",
     "cogs.logging",

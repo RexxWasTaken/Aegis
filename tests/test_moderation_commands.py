@@ -55,6 +55,9 @@ COMMUNITY_COMMANDS = {
     "voiceinfo",
     "voicestate",
     "voiceusers",
+    "tictactoe",
+    "rps",
+    "guess",
 }
 OWNER_COMMANDS = {"owner", "noprefix"}
 MUSIC_COMMANDS = {
@@ -157,6 +160,9 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 "voiceinfo",
                 "voicestate",
                 "voiceusers",
+                "tictactoe",
+                "rps",
+                "guess",
             ):
                 self.assertIn(command_name, registered_names)
             self.assertNotIn("logging event", registered_names)
@@ -183,6 +189,7 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                     "Information": 8,
                     "Fun": 7,
                     "Voice": 3,
+                    "Games": 3,
                 }
                 for category, expected_count in expected_category_counts.items():
                     self.assertEqual(
