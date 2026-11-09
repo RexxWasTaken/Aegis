@@ -22,6 +22,10 @@ _CATEGORY_EMOJIS = {
     "Giveaway": "giveaway",
     "Security": "security",
     "Utility": "utility",
+    "Fun": "fun",
+    "Games": "fun",
+    "Voice": "voice",
+    "Information": "utility",
     "AI": "ai",
     "Owner": "owner",
 }

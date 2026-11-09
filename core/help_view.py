@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import discord
 
+from core.configuration import get_default_prefix
 from core.emoji_manager import emoji_markup
 from embeds.help import help_category_page, help_command_details, help_front_page
 
@@ -20,14 +21,18 @@ PAGE_SIZE = 5
 CATEGORY_ORDER = (
     "Automod",
     "Moderation",
+    "Security",
+    "Utility",
+    "Information",
+    "Fun",
+    "Games",
+    "Voice",
     "Welcome",
     "Reaction Roles",
     "Logging",
     "Music",
     "Ticket",
     "Giveaway",
-    "Security",
-    "Utility",
     "AI",
     "Owner",
 )
@@ -42,6 +47,9 @@ CATEGORY_EMOJIS = {
     "Giveaway": "giveaway",
     "Security": "security",
     "Utility": "utility",
+    "Fun": "fun",
+    "Games": "fun",
+    "Voice": "voice",
     "AI": "ai",
     "Owner": "owner",
 }
@@ -74,10 +82,27 @@ class CommandInfo:
 
 def _category_for(command: object) -> str:
     qualified_name = str(getattr(command, "qualified_name", "")).lower()
+    root_name = qualified_name.split(" ")[0]
     cog_name = str(getattr(command, "cog_name", "") or "").lower()
     binding = getattr(command, "binding", None)
     if not cog_name and binding is not None:
         cog_name = type(binding).__name__.lower()
+    if "voice" in cog_name or root_name in {
+        "voicemute", "voiceunmute", "deafen", "undeafen", "disconnect", "move"
+    }:
+        return "Voice"
+    if "security" in cog_name or root_name == "security":
+        return "Security"
+    if "information" in cog_name or root_name in {"userinfo", "serverinfo", "avatar"}:
+        return "Information"
+    if "games" in cog_name or root_name in {"rps", "roll"}:
+        return "Games"
+    if "fun" in cog_name or root_name in {"coinflip", "eightball", "choose"}:
+        return "Fun"
+    if "utility" in cog_name or root_name in {
+        "prefix", "setprefix", "ping", "support", "invite"
+    }:
+        return "Utility"
     if qualified_name == "help":
         return "Utility"
     if "reaction" in cog_name or qualified_name.split(" ")[0] == "reactionrole":
@@ -174,10 +199,14 @@ def _slash_usage(command: object) -> str:
     return " ".join(parts)
 
 
-def _prefix_info(command: commands.Command[Any, ..., Any]) -> CommandInfo:
+def _prefix_info(
+    command: commands.Command[Any, ..., Any],
+    *,
+    prefix: str | None = None,
+) -> CommandInfo:
     qualified_name = str(command.qualified_name)
     signature = str(getattr(command, "signature", "") or "").strip()
-    usage = f"a!{qualified_name} {signature}".strip()
+    usage = f"{prefix or get_default_prefix()}{qualified_name} {signature}".strip()
     description = str(command.help or command.short_doc or "").strip()
     return CommandInfo(
         name=command.name,
@@ -213,6 +242,8 @@ def _slash_info(command: object, prefix_command: object | None = None) -> Comman
 
 def discover_commands(
     bot: commands.Bot,
+    *,
+    prefix: str | None = None,
 ) -> dict[str, dict[str, list[CommandInfo]]]:
     """Read registered prefix and application commands without a fake catalog."""
     registry: dict[str, dict[str, list[CommandInfo]]] = {
@@ -227,7 +258,7 @@ def discover_commands(
             or bool(getattr(command, "commands", ()))
         ):
             continue
-        info = _prefix_info(command)
+        info = _prefix_info(command, prefix=prefix)
         registry["prefix"][info.category].append(info)
 
     for command in bot.tree.walk_commands():
@@ -271,12 +302,20 @@ def ordered_categories(
     return preferred + additional
 
 
-def find_command(bot: commands.Bot, query: str) -> CommandInfo | None:
+def find_command(
+    bot: commands.Bot,
+    query: str,
+    *,
+    prefix: str | None = None,
+) -> CommandInfo | None:
     """Resolve a registered prefix name or alias, then a slash command name."""
-    normalized = query.strip().removeprefix("a!").strip()
-    prefix = bot.get_command(normalized)
-    if prefix is not None and not getattr(prefix, "hidden", False):
-        return _prefix_info(prefix)
+    active_prefix = prefix or get_default_prefix()
+    normalized = query.strip()
+    if normalized.startswith(active_prefix):
+        normalized = normalized[len(active_prefix) :].strip()
+    prefix_command = bot.get_command(normalized)
+    if prefix_command is not None and not getattr(prefix_command, "hidden", False):
+        return _prefix_info(prefix_command, prefix=active_prefix)
     slash_name = normalized.removeprefix("/")
     slash = next(
         (
@@ -360,11 +399,19 @@ class HelpCategorySelect(discord.ui.Select):
 class HelpView(discord.ui.View):
     """Paginated Help UI restricted to the user who invoked the command."""
 
-    def __init__(self, bot: commands.Bot, author_id: int, timeout: float = 180) -> None:
+    def __init__(
+        self,
+        bot: commands.Bot,
+        author_id: int,
+        timeout: float = 180,
+        *,
+        prefix: str | None = None,
+    ) -> None:
         super().__init__(timeout=timeout)
         self.bot = bot
         self.author_id = author_id
-        self.registry = discover_commands(bot)
+        self.prefix = prefix or get_default_prefix()
+        self.registry = discover_commands(bot, prefix=self.prefix)
         self.categories = ordered_categories(self.registry)
         self.mode = "prefix"
         self.category: str | None = None

@@ -18,6 +18,10 @@ MODERATION_EXTENSIONS = (
 )
 
 COMMUNITY_EXTENSIONS = (
+    "cogs.utility",
+    "cogs.information",
+    "cogs.fun",
+    "cogs.games",
     "cogs.ticket",
     "cogs.giveaway",
     "cogs.help",

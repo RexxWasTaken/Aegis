@@ -23,6 +23,19 @@ MODERATION_COMMANDS = {
 }
 COMMUNITY_COMMANDS = {
     "help",
+    "prefix",
+    "setprefix",
+    "ping",
+    "support",
+    "invite",
+    "userinfo",
+    "serverinfo",
+    "avatar",
+    "coinflip",
+    "eightball",
+    "choose",
+    "rps",
+    "roll",
     "ticket",
     "giveaway",
     "welcome",
@@ -131,7 +144,13 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Ticket", discovered[mode])
                 self.assertIn("Giveaway", discovered[mode])
                 self.assertIn("Music", discovered[mode])
+                for category in ("Utility", "Information", "Fun", "Games"):
+                    self.assertIn(category, discovered[mode])
                 expected_category_counts = {
+                    "Utility": 5,
+                    "Information": 3,
+                    "Fun": 3,
+                    "Games": 2,
                     "Welcome": 5,
                     "Reaction Roles": 5,
                     "Logging": 5,
@@ -142,6 +161,8 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                         expected_count,
                         f"{category} should expose exactly {expected_count} commands.",
                     )
+                if mode == "prefix":
+                    self.assertEqual(len(discovered[mode]["Voice"]), 6)
             self.assertTrue(
                 any(
                     entry.usage.startswith("a!ticket")
