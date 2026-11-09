@@ -187,8 +187,8 @@ class HelpTests(unittest.IsolatedAsyncioTestCase):
             cog_name="ReactionRolesCog",
         )
         logging_child = _prefix_command(
-            "event",
-            qualified_name="logging event",
+            "events",
+            qualified_name="logging events",
             cog_name="LoggingCog",
         )
         slash_commands = [

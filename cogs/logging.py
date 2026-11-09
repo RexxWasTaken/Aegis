@@ -43,7 +43,8 @@ class LoggingCog(commands.Cog):
     @commands.guild_only()
     async def logging(self, ctx: commands.Context) -> None:
         await ctx.send(
-            "Use `logging setup`, `event`, `ignore`, `status`, or `disable`."
+            "Use `logging setup`, `logging events`, `logging ignore`, "
+            "`logging status`, or `logging disable`."
         )
 
     @logging.command(name="setup", description="Set the logging channel.")
@@ -67,7 +68,10 @@ class LoggingCog(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @logging.command(name="event", description="Enable or disable one log event.")
+    @logging.command(
+        name="events",
+        description="Configure which logging events are enabled.",
+    )
     @commands.has_guild_permissions(manage_guild=True)
     @app_commands.choices(
         event=[
@@ -75,7 +79,7 @@ class LoggingCog(commands.Cog):
             for event, label in EVENT_LABELS.items()
         ]
     )
-    async def configure_event(
+    async def configure_events(
         self,
         ctx: commands.Context,
         event: str,
