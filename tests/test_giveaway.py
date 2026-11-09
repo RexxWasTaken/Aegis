@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -48,6 +49,49 @@ class GiveawayTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_required_info_command_is_registered(self) -> None:
         self.assertIsNotNone(GiveawayCog.giveaway.get_command("info"))
+
+    async def test_pause_and_resume_preserve_remaining_time(self) -> None:
+        now = datetime.now(timezone.utc)
+        active = replace(_giveaway(), ends_at=(now + timedelta(minutes=2)).isoformat())
+        paused = replace(active, status="paused", paused_seconds=120)
+        resumed = replace(active, ends_at=(now + timedelta(minutes=2)).isoformat())
+        repository = Mock()
+        repository.get_giveaway = AsyncMock(side_effect=[active, paused])
+        repository.update_giveaway = AsyncMock(side_effect=[paused, resumed])
+        manager = GiveawayManager(SimpleNamespace(), repository)
+        manager._refresh_announcement = AsyncMock()
+
+        pause_result = await manager.pause(active.message_id)
+        pause_seconds = repository.update_giveaway.await_args_list[0].kwargs[
+            "paused_seconds"
+        ]
+        self.assertGreater(pause_seconds, 0)
+        self.assertLessEqual(pause_seconds, 120)
+        self.assertEqual(pause_result.status, "paused")
+
+        resume_result = await manager.resume(active.message_id)
+        resume_args = repository.update_giveaway.await_args_list[1].kwargs
+        self.assertEqual(resume_args["status"], "active")
+        self.assertIsNone(resume_args["paused_seconds"])
+        self.assertGreater(resume_args["ends_at"], datetime.now(timezone.utc))
+        self.assertEqual(resume_result.status, "active")
+        self.assertEqual(manager._refresh_announcement.await_count, 2)
+
+    async def test_delete_waits_for_other_giveaway_lifecycle_operations(self) -> None:
+        repository = Mock()
+        repository.get_giveaway = AsyncMock(return_value=None)
+        manager = GiveawayManager(SimpleNamespace(), repository)
+        await manager._lifecycle_lock.acquire()
+        delete_task = asyncio.create_task(manager.delete(50))
+        try:
+            await asyncio.sleep(0)
+            repository.get_giveaway.assert_not_awaited()
+        finally:
+            manager._lifecycle_lock.release()
+
+        with self.assertRaises(GiveawayManagerError):
+            await delete_task
+        repository.get_giveaway.assert_awaited_once_with(50)
 
     async def test_end_and_reroll_store_multiple_unique_winners(self) -> None:
         channel = Mock(spec=discord.TextChannel)

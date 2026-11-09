@@ -154,6 +154,67 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await manager.can_access(ticket, _member(50, role_ids=(99,))))
         self.assertFalse(await manager.can_access(ticket, _member(60)))
 
+    async def test_open_ticket_creates_private_channel_and_prevents_duplicate(self) -> None:
+        ticket = _ticket()
+        repository = Mock()
+        repository.get_ticket_config = AsyncMock(
+            return_value=TicketConfig(10, 99, 40, None)
+        )
+        repository.get_open_ticket = AsyncMock(side_effect=[None, ticket])
+        repository.create_ticket = AsyncMock(return_value=ticket)
+        manager = TicketManager(Mock(), repository)
+        manager.log_event = AsyncMock()
+
+        creator = Mock(spec=discord.Member)
+        creator.id = 30
+        creator.mention = "<@30>"
+        creator.display_name = "Ticket Creator"
+        staff_role = Mock(spec=discord.Role)
+        staff_role.id = 99
+        category = Mock(spec=discord.CategoryChannel)
+        bot_member = Mock(spec=discord.Member)
+        default_role = Mock(spec=discord.Role)
+        default_role.id = 0
+        created_channel = Mock(spec=discord.TextChannel)
+        created_channel.id = 20
+        created_channel.delete = AsyncMock()
+        existing_channel = Mock(spec=discord.TextChannel)
+        existing_channel.mention = "#ticket-existing"
+        guild = SimpleNamespace(
+            id=10,
+            default_role=default_role,
+            me=bot_member,
+            get_member=lambda member_id: bot_member if member_id == 1 else None,
+            get_role=lambda role_id: staff_role if role_id == 99 else None,
+            get_channel=lambda channel_id: (
+                category if channel_id == 40 else existing_channel
+            ),
+            create_text_channel=AsyncMock(return_value=created_channel),
+        )
+        manager.bot = SimpleNamespace(user=SimpleNamespace(id=1))
+
+        created, channel = await manager.open_ticket(
+            guild=guild,
+            creator=creator,
+            category="General Support",
+        )
+
+        self.assertEqual(created, ticket)
+        self.assertIs(channel, created_channel)
+        overwrites = guild.create_text_channel.await_args.kwargs["overwrites"]
+        self.assertFalse(overwrites[default_role].view_channel)
+        self.assertTrue(overwrites[creator].view_channel)
+        self.assertTrue(overwrites[staff_role].manage_messages)
+        self.assertTrue(overwrites[bot_member].manage_channels)
+
+        with self.assertRaisesRegex(TicketManagerError, "already have an open ticket"):
+            await manager.open_ticket(
+                guild=guild,
+                creator=creator,
+                category="General Support",
+            )
+        guild.create_text_channel.assert_awaited_once()
+
     async def test_close_reopen_and_claim_apply_permissions_and_persist_state(self) -> None:
         repository = Mock()
         repository.get_ticket_config = AsyncMock(
@@ -211,6 +272,40 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
             status="open",
             closed_at=None,
         )
+
+    async def test_close_restores_original_permission_when_database_update_fails(self) -> None:
+        repository = Mock()
+        repository.get_ticket_config = AsyncMock(
+            return_value=TicketConfig(10, 99, None, None)
+        )
+        repository.set_ticket_status = AsyncMock(
+            side_effect=RuntimeError("database unavailable")
+        )
+        manager = TicketManager(Mock(), repository)
+        creator = _member(30)
+        guild = SimpleNamespace(get_member=lambda member_id: creator)
+        channel = Mock(spec=discord.TextChannel)
+        channel.guild = guild
+        overwrite = SimpleNamespace(
+            view_channel=True,
+            send_messages=None,
+            read_message_history=True,
+        )
+        channel.overwrites_for.return_value = overwrite
+        channel.set_permissions = AsyncMock()
+
+        with self.assertRaisesRegex(
+            TicketManagerError,
+            "previous channel permissions were restored",
+        ):
+            await manager.close(
+                ticket=_ticket(),
+                channel=channel,
+                actor=creator,
+            )
+
+        self.assertEqual(channel.set_permissions.await_count, 2)
+        self.assertIsNone(overwrite.send_messages)
 
     async def test_reopen_restores_closed_permissions_when_database_update_fails(self) -> None:
         repository = Mock()

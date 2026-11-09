@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -142,6 +143,84 @@ class CommunityRepositoryTests(unittest.IsolatedAsyncioTestCase):
             await self.repository.get_ticket_transcript(ticket.ticket_id),
             transcript,
         )
+
+    async def test_initialize_adds_transcript_table_without_replacing_legacy_data(self) -> None:
+        await self.repository.close()
+        self.database_path.unlink(missing_ok=True)
+        connection = sqlite3.connect(self.database_path)
+        connection.executescript(
+            """
+            CREATE TABLE ticket_configs (
+                guild_id INTEGER PRIMARY KEY,
+                staff_role_id INTEGER NOT NULL,
+                category_id INTEGER,
+                log_channel_id INTEGER
+            );
+            CREATE TABLE tickets (
+                ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL UNIQUE,
+                creator_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                claimed_by INTEGER,
+                created_at TEXT NOT NULL,
+                closed_at TEXT
+            );
+            CREATE TABLE ticket_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
+                actor_id INTEGER NOT NULL,
+                event TEXT NOT NULL,
+                details TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE giveaways (
+                message_id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                host_id INTEGER NOT NULL,
+                prize TEXT NOT NULL,
+                winner_count INTEGER NOT NULL CHECK (winner_count > 0),
+                ends_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                paused_seconds INTEGER,
+                winners_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        connection.execute(
+            "INSERT INTO ticket_configs VALUES (10, 20, NULL, NULL)"
+        )
+        connection.execute(
+            """
+            INSERT INTO tickets
+                (ticket_id, guild_id, channel_id, creator_id, category, status, created_at)
+            VALUES (17, 10, 100, 200, 'General Support', 'closed', ?)
+            """,
+            (created_at,),
+        )
+        connection.execute(
+            """
+            INSERT INTO giveaways
+                (message_id, guild_id, channel_id, host_id, prize, winner_count,
+                 ends_at, status, winners_json, created_at)
+            VALUES (500, 10, 11, 12, 'Legacy prize', 1, ?, 'active', '[]', ?)
+            """,
+            (created_at, created_at),
+        )
+        connection.commit()
+        connection.close()
+
+        self.repository = CommunityRepository(self.database_path)
+        await self.repository.initialize()
+
+        self.assertEqual((await self.repository.get_ticket(100)).status, "closed")
+        self.assertEqual((await self.repository.get_giveaway(500)).prize, "Legacy prize")
+        self.assertIsNone(await self.repository.get_ticket_transcript(17))
 
 
 if __name__ == "__main__":
