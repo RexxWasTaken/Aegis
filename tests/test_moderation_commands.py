@@ -26,7 +26,27 @@ COMMUNITY_COMMANDS = {
     "ticket",
     "giveaway",
 }
-EXPECTED_COMMANDS = MODERATION_COMMANDS | COMMUNITY_COMMANDS
+MUSIC_COMMANDS = {
+    "play",
+    "pause",
+    "resume",
+    "skip",
+    "stop",
+    "queue",
+    "nowplaying",
+    "volume",
+    "loop",
+    "shuffle",
+    "lyrics",
+    "seek",
+    "remove",
+    "clear",
+    "join",
+    "leave",
+    "previous",
+    "autoplay",
+}
+EXPECTED_COMMANDS = MODERATION_COMMANDS | COMMUNITY_COMMANDS | MUSIC_COMMANDS
 
 
 class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
@@ -84,6 +104,7 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(any(name.endswith("help") for name in names))
                 self.assertIn("Ticket", discovered[mode])
                 self.assertIn("Giveaway", discovered[mode])
+                self.assertIn("Music", discovered[mode])
             self.assertTrue(
                 any(
                     entry.usage.startswith("a!ticket")
@@ -102,6 +123,9 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
             giveaway_cog = bot.get_cog("GiveawayCog")
             if giveaway_cog is not None:
                 giveaway_cog.expire_due_giveaways.cancel()
+            music_events = bot.get_cog("MusicPlayerEvents")
+            if music_events is not None:
+                music_events.refresh_music_panels.cancel()
             await community_repository.close()
             await bot.close()
 
@@ -117,7 +141,7 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(
                 {command.name for command in bot.tree.get_commands()},
-                COMMUNITY_COMMANDS,
+                COMMUNITY_COMMANDS | MUSIC_COMMANDS,
             )
             self.assertIsNotNone(bot.tempban_expiry_task)
             self.assertTrue(bot.tempban_expiry_task.run.is_running())

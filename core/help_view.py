@@ -65,6 +65,7 @@ class CommandInfo:
     permissions: tuple[str, ...]
     examples: tuple[str, ...]
     category: str
+    emoji: str | None = None
 
 
 def _category_for(command: object) -> str:
@@ -145,6 +146,11 @@ def _examples(command: object) -> tuple[str, ...]:
     return tuple(str(value).strip() for value in values if str(value).strip())
 
 
+def _help_emoji(command: object) -> str | None:
+    value = _extras(command).get("help_emoji")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
 def _slash_usage(command: object) -> str:
     qualified_name = str(getattr(command, "qualified_name", ""))
     parts = [f"/{qualified_name}"]
@@ -172,6 +178,7 @@ def _prefix_info(command: commands.Command[Any, ..., Any]) -> CommandInfo:
         permissions=_permission_labels(command),
         examples=_examples(command),
         category=_category_for(command),
+        emoji=_help_emoji(command),
     )
 
 
@@ -189,6 +196,8 @@ def _slash_info(command: object, prefix_command: object | None = None) -> Comman
         permissions=_permission_labels(permission_source),
         examples=_examples(permission_source),
         category=_category_for(command),
+        emoji=_help_emoji(permission_source)
+        or _help_emoji(command),
     )
 
 

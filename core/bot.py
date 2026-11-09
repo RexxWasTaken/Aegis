@@ -11,6 +11,7 @@ from discord.ext import commands
 
 from core.errors import handle_command_error
 from core.loader import load_extensions
+from core.music_manager import MusicManager
 from database.repositories.community import CommunityRepository
 from database.repositories.moderation import ModerationRepository
 from services.moderation_service import ModerationService
@@ -33,6 +34,7 @@ class AegisBot(commands.Bot):
         self.moderation_service: ModerationService | None = None
         self.tempban_expiry_task: TempBanExpiryTask | None = None
         self.community_repository: CommunityRepository | None = None
+        self.music_manager: MusicManager | None = None
         self._application_commands_synced = False
 
     async def setup_hook(self) -> None:
@@ -43,6 +45,8 @@ class AegisBot(commands.Bot):
         community_repository = CommunityRepository(self.database_path)
         await community_repository.initialize()
         self.community_repository = community_repository
+        self.music_manager = MusicManager(self)
+        await self.music_manager.connect(attempts=1, timeout=5.0)
         await load_extensions(self)
         self.tempban_expiry_task = TempBanExpiryTask(self, repository)
         self.tempban_expiry_task.start()
@@ -67,6 +71,12 @@ class AegisBot(commands.Bot):
         giveaway_cog = self.get_cog("GiveawayCog")
         if giveaway_cog is not None:
             giveaway_cog.expire_due_giveaways.cancel()
+        music_events = self.get_cog("MusicPlayerEvents")
+        if music_events is not None:
+            music_events.refresh_music_panels.cancel()
+        if self.music_manager is not None:
+            await self.music_manager.close()
+            self.music_manager = None
         if self.tempban_expiry_task is not None:
             self.tempban_expiry_task.cancel()
             self.tempban_expiry_task = None
