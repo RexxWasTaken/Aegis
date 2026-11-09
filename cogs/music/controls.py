@@ -127,10 +127,18 @@ class PlayerControls(discord.ui.View):
 
     def refresh_state(self) -> None:
         """Update the pause button label and icon before editing the panel."""
+        paused = bool(getattr(self.player, "paused", False))
         for item in self.children:
             if isinstance(item, _PlayerButton) and item.action == "toggle":
-                self.remove_item(item)
-                self.add_item(self._pause_button())
+                item.label = "Resume" if paused else "Pause"
+                item.emoji = discord.PartialEmoji.from_str(
+                    emoji_markup("play" if paused else "pause")
+                )
+                item.style = (
+                    discord.ButtonStyle.success
+                    if paused
+                    else discord.ButtonStyle.secondary
+                )
                 break
 
     async def run_action(self, action: str) -> str | None:

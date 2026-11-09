@@ -41,8 +41,8 @@ COMMAND_EMOJIS = {
     "shuffle": "shuffle",
     "lyrics": "media",
     "seek": "media",
-    "remove": "delete",
-    "clear": "delete",
+    "remove": "queue",
+    "clear": "queue",
     "join": "voice",
     "leave": "voice",
     "previous": "previous",
@@ -93,7 +93,7 @@ class MusicCog(commands.Cog):
         await ctx.send(content, **options)
 
     async def _error(self, ctx: commands.Context, message: str) -> None:
-        await self._reply(ctx, f"{emoji_markup('error')} {message}")
+        await self._reply(ctx, f"{emoji_markup('media')} {message}")
 
     @staticmethod
     def _voice_channel(ctx: commands.Context) -> discord.VoiceChannel | discord.StageChannel | None:
@@ -523,7 +523,7 @@ class MusicCog(commands.Cog):
             return
         track = player.queue[position - 1]
         player.queue.delete(position - 1)
-        await self._reply(ctx, f"{emoji_markup('delete')} Removed **{track.title[:150]}**.")
+        await self._reply(ctx, f"{emoji_markup('queue')} Removed **{track.title[:150]}**.")
 
     @commands.hybrid_command(
         name="clear",
@@ -538,7 +538,7 @@ class MusicCog(commands.Cog):
         player.queue.clear()
         player.auto_queue.clear()
         await player.update_panel()
-        await self._reply(ctx, f"{emoji_markup('delete')} Cleared {count} upcoming track(s).")
+        await self._reply(ctx, f"{emoji_markup('queue')} Cleared {count} upcoming track(s).")
 
     @commands.hybrid_command(
         name="join",

@@ -113,6 +113,7 @@ class MusicPlayerEvents(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self._next_lavalink_retry = 0.0
         self.refresh_music_panels.start()
 
     def cog_unload(self) -> None:
@@ -121,8 +122,16 @@ class MusicPlayerEvents(commands.Cog):
     @tasks.loop(seconds=15)
     async def refresh_music_panels(self) -> None:
         manager = getattr(self.bot, "music_manager", None)
+        if manager is None:
+            return
         node = getattr(manager, "node", None)
-        if node is None or node.status is not wavelink.NodeStatus.CONNECTED:
+        if node is None:
+            now = asyncio.get_running_loop().time()
+            if getattr(manager, "password", "") and now >= self._next_lavalink_retry:
+                self._next_lavalink_retry = now + 60
+                await manager.connect(attempts=1, timeout=5.0)
+            return
+        if node.status is not wavelink.NodeStatus.CONNECTED:
             return
 
         for player in node.players.values():

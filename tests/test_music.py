@@ -16,10 +16,12 @@ from cogs.music.queue import (
     set_repeat_mode,
     shuffle_queue,
 )
+from core.help_view import discover_commands, find_command
 from core.emoji_manager import EMOJI_IDS, emoji_markup
 from core.music_manager import MusicManager
 from embeds.music import player_embed, queue_embed
 from embeds.music import lyrics_embed
+from embeds.help import help_category_page, help_command_details
 from utils.music_helpers import (
     fetch_lyrics,
     format_duration,
@@ -67,6 +69,25 @@ class MusicHelperTests(unittest.TestCase):
             parse_seek_position("1:75")
 
     def test_requester_and_music_emoji_mappings_are_existing_catalog_entries(self) -> None:
+        allowed = {
+            "play",
+            "pause",
+            "stop",
+            "next",
+            "previous",
+            "queue",
+            "shuffle",
+            "volume",
+            "repeat",
+            "music",
+            "media",
+            "voice",
+            "mute",
+            "favorite",
+            "arrow",
+            "larrow",
+        }
+        self.assertTrue(set(COMMAND_EMOJIS.values()).issubset(allowed))
         for emoji_name in COMMAND_EMOJIS.values():
             self.assertIn(emoji_name, EMOJI_IDS)
             self.assertEqual(
@@ -159,6 +180,24 @@ class MusicIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(bot.get_command(alias), command, alias)
                 self.assertIn(name, {item.name for item in bot.tree.get_commands()})
             self.assertEqual(bot.get_command("play").extras["help_emoji"], "play")
+            play_info = find_command(bot, "play")
+            self.assertEqual(play_info.emoji, "play")
+            details = help_command_details(play_info)
+            detail_fields = {field.name: field.value for field in details.fields}
+            self.assertIn(emoji_markup("play"), detail_fields["Command"])
+            registry = discover_commands(bot)
+            music_commands = registry["prefix"]["Music"]
+            play = next(command for command in music_commands if command.name == "play")
+            category = help_category_page(
+                category="Music",
+                mode="prefix",
+                entries=[play],
+                page=1,
+                page_count=1,
+            )
+            self.assertIn(emoji_markup("play"), category.fields[0].name)
+            slash_info = find_command(bot, "/play")
+            self.assertEqual(slash_info.emoji, "play")
         finally:
             await bot.close()
 
@@ -227,9 +266,19 @@ class MusicIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         player.queue.put(_track("queued"))
         view = PlayerControls(player)
+        self.assertEqual(
+            [item.label for item in view.children],
+            ["Previous", "Pause", "Skip", "Stop"],
+        )
         result = await view.run_action("toggle")
         self.assertEqual(result, "Playback paused.")
         player.pause.assert_awaited_once_with(True)
+        player.paused = True
+        view.refresh_state()
+        self.assertEqual(
+            [item.label for item in view.children],
+            ["Previous", "Resume", "Skip", "Stop"],
+        )
         await view.run_action("stop")
         self.assertFalse(player.queue)
         self.assertFalse(player.auto_queue)
