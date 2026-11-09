@@ -55,6 +55,12 @@ class NewCategoryEventTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ReactionRoleManager.role_is_safe(guild, role))
         role.permissions.administrator = True
         self.assertFalse(ReactionRoleManager.role_is_safe(guild, role))
+        role.permissions.administrator = False
+        role.permissions.manage_nicknames = True
+        self.assertFalse(ReactionRoleManager.role_is_safe(guild, role))
+        role.permissions.manage_nicknames = False
+        role.permissions.view_audit_log = True
+        self.assertFalse(ReactionRoleManager.role_is_safe(guild, role))
 
     async def test_reaction_add_and_remove_assign_the_saved_role(self) -> None:
         role = SimpleNamespace(
@@ -160,6 +166,36 @@ class NewCategoryEventTests(unittest.IsolatedAsyncioTestCase):
         destination.send.assert_awaited_once()
         self.assertEqual(destination.send.await_args.args, ("plain log text",))
         self.assertNotIn("embed", destination.send.await_args.kwargs)
+
+    async def test_audit_log_permission_errors_do_not_crash_or_guess_executor(self) -> None:
+        manager = LoggingManager(Mock(), Mock())
+        guild = SimpleNamespace(
+            id=10,
+            me=SimpleNamespace(
+                guild_permissions=SimpleNamespace(view_audit_log=False)
+            ),
+            audit_logs=Mock(),
+        )
+        self.assertIsNone(
+            await manager.find_executor(
+                guild,
+                action=discord.AuditLogAction.kick,
+                target_id=55,
+            )
+        )
+        guild.audit_logs.assert_not_called()
+
+        guild.me.guild_permissions.view_audit_log = True
+        guild.audit_logs = Mock(
+            side_effect=discord.Forbidden(response=Mock(), message="Forbidden")
+        )
+        self.assertIsNone(
+            await manager.find_executor(
+                guild,
+                action=discord.AuditLogAction.kick,
+                target_id=55,
+            )
+        )
 
     def test_event_listeners_and_reference_panel_are_registered(self) -> None:
         listeners = {name for name, _ in LoggingCog.__cog_listeners__}
