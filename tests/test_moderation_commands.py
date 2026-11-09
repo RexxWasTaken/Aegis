@@ -105,12 +105,16 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 "reactionrole list",
                 "reactionrole delete",
                 "logging setup",
-                "logging event",
+                "logging events",
                 "logging ignore",
                 "logging status",
                 "logging disable",
             ):
                 self.assertIn(command_name, registered_names)
+            self.assertNotIn("logging event", registered_names)
+            slash_names = [command.qualified_name for command in bot.tree.walk_commands()]
+            self.assertIn("logging events", slash_names)
+            self.assertNotIn("logging event", slash_names)
             from core.help_view import discover_commands
 
             discovered = discover_commands(bot)

@@ -36,7 +36,7 @@ class NewCategoryCommandTests(unittest.TestCase):
             },
             LoggingCog: {
                 "logging setup",
-                "logging event",
+                "logging events",
                 "logging ignore",
                 "logging status",
                 "logging disable",
