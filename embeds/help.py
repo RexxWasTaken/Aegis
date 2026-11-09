@@ -15,6 +15,8 @@ _CATEGORY_EMOJIS = {
     "Automod": "antinuke",
     "Moderation": "moderation",
     "Welcome": "welcomer",
+    "Reaction Roles": "utility",
+    "Logging": "security",
     "Music": "music",
     "Ticket": "ticket",
     "Giveaway": "giveaway",

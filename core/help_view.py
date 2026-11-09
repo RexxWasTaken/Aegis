@@ -21,6 +21,8 @@ CATEGORY_ORDER = (
     "Automod",
     "Moderation",
     "Welcome",
+    "Reaction Roles",
+    "Logging",
     "Music",
     "Ticket",
     "Giveaway",
@@ -33,6 +35,8 @@ CATEGORY_EMOJIS = {
     "Automod": "antinuke",
     "Moderation": "moderation",
     "Welcome": "welcomer",
+    "Reaction Roles": "utility",
+    "Logging": "security",
     "Music": "music",
     "Ticket": "ticket",
     "Giveaway": "giveaway",
@@ -76,6 +80,12 @@ def _category_for(command: object) -> str:
         cog_name = type(binding).__name__.lower()
     if qualified_name == "help":
         return "Utility"
+    if "reaction" in cog_name or qualified_name.split(" ")[0] == "reactionrole":
+        return "Reaction Roles"
+    if "logging" in cog_name or qualified_name.split(" ")[0] == "logging":
+        return "Logging"
+    if "goodbye" in cog_name or qualified_name.split(" ")[0] == "goodbye":
+        return "Welcome"
     if qualified_name == "ticket" or qualified_name.startswith("ticket ") or "ticket" in cog_name:
         return "Ticket"
     if qualified_name == "giveaway" or qualified_name.startswith("giveaway ") or (
@@ -211,14 +221,22 @@ def discover_commands(
     }
     for command in bot.walk_commands():
         qualified_name = str(command.qualified_name)
-        if qualified_name == "help" or getattr(command, "hidden", False):
+        if (
+            qualified_name == "help"
+            or getattr(command, "hidden", False)
+            or bool(getattr(command, "commands", ()))
+        ):
             continue
         info = _prefix_info(command)
         registry["prefix"][info.category].append(info)
 
     for command in bot.tree.walk_commands():
         qualified_name = str(command.qualified_name)
-        if qualified_name == "help" or getattr(command, "hidden", False):
+        if (
+            qualified_name == "help"
+            or getattr(command, "hidden", False)
+            or bool(getattr(command, "commands", ()))
+        ):
             continue
         prefix_command = bot.get_command(qualified_name)
         info = _slash_info(command, prefix_command)

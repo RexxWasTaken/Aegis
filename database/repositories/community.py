@@ -47,6 +47,45 @@ class GiveawayRecord:
     created_at: str
 
 
+@dataclass(frozen=True)
+class WelcomeConfig:
+    guild_id: int
+    welcome_channel_id: int | None
+    welcome_message: str | None
+    welcome_enabled: bool
+    goodbye_channel_id: int | None
+    goodbye_message: str | None
+    goodbye_enabled: bool
+
+
+@dataclass(frozen=True)
+class ReactionRolePanel:
+    message_id: int
+    guild_id: int
+    channel_id: int
+    created_by: int
+
+
+@dataclass(frozen=True)
+class ReactionRoleMapping:
+    message_id: int
+    guild_id: int
+    emoji_key: str
+    emoji: str
+    role_id: int
+
+
+@dataclass(frozen=True)
+class LoggingConfig:
+    guild_id: int
+    channel_id: int
+    enabled: bool
+    enabled_events: tuple[str, ...]
+    ignored_channels: tuple[int, ...] = ()
+    ignored_users: tuple[int, ...] = ()
+    ignored_roles: tuple[int, ...] = ()
+
+
 class CommunityRepository:
     """Store community state in the existing AEGIS SQLite database."""
 
@@ -150,6 +189,70 @@ class CommunityRepository:
                 """
                 CREATE INDEX IF NOT EXISTS idx_giveaways_due
                 ON giveaways(status, ends_at)
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS welcome_configs (
+                    guild_id INTEGER PRIMARY KEY,
+                    welcome_channel_id INTEGER,
+                    welcome_message TEXT,
+                    welcome_enabled INTEGER NOT NULL DEFAULT 0,
+                    goodbye_channel_id INTEGER,
+                    goodbye_message TEXT,
+                    goodbye_enabled INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reaction_role_panels (
+                    message_id INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    created_by INTEGER NOT NULL
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_reaction_role_panels_guild
+                ON reaction_role_panels(guild_id, message_id)
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reaction_role_mappings (
+                    message_id INTEGER NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    emoji_key TEXT NOT NULL,
+                    emoji TEXT NOT NULL,
+                    role_id INTEGER NOT NULL,
+                    PRIMARY KEY(message_id, emoji_key),
+                    FOREIGN KEY(message_id) REFERENCES reaction_role_panels(message_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS logging_configs (
+                    guild_id INTEGER PRIMARY KEY,
+                    channel_id INTEGER NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    events_json TEXT NOT NULL DEFAULT '[]'
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS logging_ignored (
+                    guild_id INTEGER NOT NULL,
+                    target_type TEXT NOT NULL
+                        CHECK(target_type IN ('channel', 'user', 'role')),
+                    target_id INTEGER NOT NULL,
+                    PRIMARY KEY(guild_id, target_type, target_id)
+                )
                 """
             )
             await self._db.commit()
@@ -502,6 +605,341 @@ class CommunityRepository:
                 "DELETE FROM giveaways WHERE message_id = ?", (message_id,)
             )
             await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def set_welcome_config(
+        self,
+        *,
+        guild_id: int,
+        kind: str,
+        channel_id: int,
+        message: str,
+    ) -> WelcomeConfig:
+        if kind not in {"welcome", "goodbye"}:
+            raise ValueError("Welcome type must be welcome or goodbye.")
+        if channel_id <= 0 or not message.strip() or len(message) > 2000:
+            raise ValueError("Choose a channel and a message of 1–2000 characters.")
+        if kind == "welcome":
+            sql = """
+                INSERT INTO welcome_configs
+                    (guild_id, welcome_channel_id, welcome_message, welcome_enabled)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    welcome_channel_id = excluded.welcome_channel_id,
+                    welcome_message = excluded.welcome_message,
+                    welcome_enabled = 1
+            """
+        else:
+            sql = """
+                INSERT INTO welcome_configs
+                    (guild_id, goodbye_channel_id, goodbye_message, goodbye_enabled)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    goodbye_channel_id = excluded.goodbye_channel_id,
+                    goodbye_message = excluded.goodbye_message,
+                    goodbye_enabled = 1
+            """
+        async with self._lock:
+            await self._connection().execute(sql, (guild_id, channel_id, message))
+            await self._connection().commit()
+            cursor = await self._connection().execute(
+                "SELECT * FROM welcome_configs WHERE guild_id = ?", (guild_id,)
+            )
+            row = await cursor.fetchone()
+        return self._welcome_config_from_row(row)
+
+    @staticmethod
+    def _welcome_config_from_row(row: aiosqlite.Row) -> WelcomeConfig:
+        values = dict(row)
+        values["welcome_enabled"] = bool(values["welcome_enabled"])
+        values["goodbye_enabled"] = bool(values["goodbye_enabled"])
+        return WelcomeConfig(**values)
+
+    async def get_welcome_config(self, guild_id: int) -> WelcomeConfig | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT * FROM welcome_configs WHERE guild_id = ?", (guild_id,)
+            )
+            row = await cursor.fetchone()
+        return self._welcome_config_from_row(row) if row is not None else None
+
+    async def disable_welcome(self, *, guild_id: int, kind: str) -> bool:
+        if kind not in {"welcome", "goodbye"}:
+            raise ValueError("Welcome type must be welcome or goodbye.")
+        enabled_column = f"{kind}_enabled"
+        async with self._lock:
+            cursor = await self._connection().execute(
+                f"UPDATE welcome_configs SET {enabled_column} = 0 WHERE guild_id = ?",
+                (guild_id,),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def create_reaction_role_panel(
+        self,
+        *,
+        message_id: int,
+        guild_id: int,
+        channel_id: int,
+        created_by: int,
+    ) -> ReactionRolePanel:
+        async with self._lock:
+            await self._connection().execute(
+                """
+                INSERT INTO reaction_role_panels
+                    (message_id, guild_id, channel_id, created_by)
+                VALUES (?, ?, ?, ?)
+                """,
+                (message_id, guild_id, channel_id, created_by),
+            )
+            await self._connection().commit()
+        return ReactionRolePanel(message_id, guild_id, channel_id, created_by)
+
+    async def get_reaction_role_panel(
+        self, message_id: int
+    ) -> ReactionRolePanel | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT * FROM reaction_role_panels WHERE message_id = ?",
+                (message_id,),
+            )
+            row = await cursor.fetchone()
+        return ReactionRolePanel(**dict(row)) if row is not None else None
+
+    async def list_reaction_role_panels(
+        self, guild_id: int | None = None
+    ) -> list[ReactionRolePanel]:
+        async with self._lock:
+            if guild_id is None:
+                cursor = await self._connection().execute(
+                    "SELECT * FROM reaction_role_panels ORDER BY guild_id, message_id"
+                )
+            else:
+                cursor = await self._connection().execute(
+                    """
+                    SELECT * FROM reaction_role_panels
+                    WHERE guild_id = ? ORDER BY message_id
+                    """,
+                    (guild_id,),
+                )
+            rows = await cursor.fetchall()
+        return [ReactionRolePanel(**dict(row)) for row in rows]
+
+    async def add_reaction_role_mapping(
+        self,
+        *,
+        message_id: int,
+        guild_id: int,
+        emoji_key: str,
+        emoji: str,
+        role_id: int,
+    ) -> ReactionRoleMapping:
+        try:
+            async with self._lock:
+                await self._connection().execute(
+                    """
+                    INSERT INTO reaction_role_mappings
+                        (message_id, guild_id, emoji_key, emoji, role_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (message_id, guild_id, emoji_key, emoji, role_id),
+                )
+                await self._connection().commit()
+        except aiosqlite.IntegrityError as exc:
+            raise ValueError(
+                "That reaction already has a role mapping on this panel."
+            ) from exc
+        return ReactionRoleMapping(message_id, guild_id, emoji_key, emoji, role_id)
+
+    async def get_reaction_role_mapping(
+        self, *, message_id: int, emoji_key: str
+    ) -> ReactionRoleMapping | None:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT * FROM reaction_role_mappings
+                WHERE message_id = ? AND emoji_key = ?
+                """,
+                (message_id, emoji_key),
+            )
+            row = await cursor.fetchone()
+        return ReactionRoleMapping(**dict(row)) if row is not None else None
+
+    async def list_reaction_role_mappings(
+        self, message_id: int
+    ) -> list[ReactionRoleMapping]:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT * FROM reaction_role_mappings
+                WHERE message_id = ? ORDER BY emoji_key
+                """,
+                (message_id,),
+            )
+            rows = await cursor.fetchall()
+        return [ReactionRoleMapping(**dict(row)) for row in rows]
+
+    async def remove_reaction_role_mapping(
+        self, *, message_id: int, emoji_key: str
+    ) -> bool:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                DELETE FROM reaction_role_mappings
+                WHERE message_id = ? AND emoji_key = ?
+                """,
+                (message_id, emoji_key),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def delete_reaction_role_panel(self, message_id: int) -> bool:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "DELETE FROM reaction_role_panels WHERE message_id = ?",
+                (message_id,),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def set_logging_config(
+        self,
+        *,
+        guild_id: int,
+        channel_id: int | None = None,
+        enabled: bool | None = None,
+        enabled_events: tuple[str, ...] | None = None,
+    ) -> LoggingConfig:
+        async with self._lock:
+            db = self._connection()
+            cursor = await db.execute(
+                "SELECT * FROM logging_configs WHERE guild_id = ?", (guild_id,)
+            )
+            current = await cursor.fetchone()
+            if current is None:
+                if channel_id is None:
+                    raise LookupError("Set a logging channel before changing settings.")
+                events = tuple(sorted(set(enabled_events or ())))
+                await db.execute(
+                    """
+                    INSERT INTO logging_configs (guild_id, channel_id, enabled, events_json)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        guild_id,
+                        channel_id,
+                        int(True if enabled is None else enabled),
+                        json.dumps(events),
+                    ),
+                )
+            else:
+                new_channel = int(channel_id or current["channel_id"])
+                new_enabled = int(
+                    bool(current["enabled"]) if enabled is None else enabled
+                )
+                try:
+                    old_events = tuple(json.loads(current["events_json"]))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    old_events = ()
+                events = tuple(
+                    sorted(set(old_events if enabled_events is None else enabled_events))
+                )
+                await db.execute(
+                    """
+                    UPDATE logging_configs
+                    SET channel_id = ?, enabled = ?, events_json = ?
+                    WHERE guild_id = ?
+                    """,
+                    (new_channel, new_enabled, json.dumps(events), guild_id),
+                )
+            await db.commit()
+        result = await self.get_logging_config(guild_id)
+        if result is None:
+            raise RuntimeError("Logging settings could not be saved.")
+        return result
+
+    async def get_logging_config(self, guild_id: int) -> LoggingConfig | None:
+        async with self._lock:
+            db = self._connection()
+            cursor = await db.execute(
+                "SELECT * FROM logging_configs WHERE guild_id = ?", (guild_id,)
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            ignore_cursor = await db.execute(
+                """
+                SELECT target_type, target_id FROM logging_ignored
+                WHERE guild_id = ? ORDER BY target_type, target_id
+                """,
+                (guild_id,),
+            )
+            ignored_rows = await ignore_cursor.fetchall()
+        try:
+            events = tuple(sorted(set(json.loads(row["events_json"]))))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            events = ()
+        ignored = {"channel": [], "user": [], "role": []}
+        for ignored_row in ignored_rows:
+            ignored[str(ignored_row["target_type"])].append(
+                int(ignored_row["target_id"])
+            )
+        return LoggingConfig(
+            guild_id=int(row["guild_id"]),
+            channel_id=int(row["channel_id"]),
+            enabled=bool(row["enabled"]),
+            enabled_events=events,
+            ignored_channels=tuple(ignored["channel"]),
+            ignored_users=tuple(ignored["user"]),
+            ignored_roles=tuple(ignored["role"]),
+        )
+
+    async def set_logging_event(
+        self, *, guild_id: int, event: str, enabled: bool
+    ) -> LoggingConfig:
+        config = await self.get_logging_config(guild_id)
+        if config is None:
+            raise LookupError("Configure a logging channel before changing events.")
+        events = set(config.enabled_events)
+        if enabled:
+            events.add(event)
+        else:
+            events.discard(event)
+        return await self.set_logging_config(
+            guild_id=guild_id,
+            enabled_events=tuple(sorted(events)),
+        )
+
+    async def set_logging_ignore(
+        self,
+        *,
+        guild_id: int,
+        target_type: str,
+        target_id: int,
+        ignored: bool,
+    ) -> bool:
+        if target_type not in {"channel", "user", "role"} or target_id <= 0:
+            raise ValueError("Choose a valid channel, user, or role ID.")
+        async with self._lock:
+            db = self._connection()
+            if ignored:
+                cursor = await db.execute(
+                    """
+                    INSERT OR IGNORE INTO logging_ignored
+                        (guild_id, target_type, target_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    (guild_id, target_type, target_id),
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    DELETE FROM logging_ignored
+                    WHERE guild_id = ? AND target_type = ? AND target_id = ?
+                    """,
+                    (guild_id, target_type, target_id),
+                )
+            await db.commit()
         return cursor.rowcount == 1
 
     async def close(self) -> None:

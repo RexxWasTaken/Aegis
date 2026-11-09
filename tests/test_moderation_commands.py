@@ -25,6 +25,10 @@ COMMUNITY_COMMANDS = {
     "help",
     "ticket",
     "giveaway",
+    "welcome",
+    "goodbye",
+    "reactionrole",
+    "logging",
 }
 MUSIC_COMMANDS = {
     "play",
@@ -90,6 +94,21 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 "giveaway delete",
                 "giveaway pause",
                 "giveaway resume",
+                "welcome setup",
+                "welcome test",
+                "welcome disable",
+                "goodbye setup",
+                "goodbye disable",
+                "reactionrole panel",
+                "reactionrole add",
+                "reactionrole remove",
+                "reactionrole list",
+                "reactionrole delete",
+                "logging setup",
+                "logging event",
+                "logging ignore",
+                "logging status",
+                "logging disable",
             ):
                 self.assertIn(command_name, registered_names)
             from core.help_view import discover_commands
@@ -105,6 +124,17 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Ticket", discovered[mode])
                 self.assertIn("Giveaway", discovered[mode])
                 self.assertIn("Music", discovered[mode])
+                expected_category_counts = {
+                    "Welcome": 5,
+                    "Reaction Roles": 5,
+                    "Logging": 5,
+                }
+                for category, expected_count in expected_category_counts.items():
+                    self.assertEqual(
+                        len(discovered[mode][category]),
+                        expected_count,
+                        f"{category} should expose exactly {expected_count} commands.",
+                    )
             self.assertTrue(
                 any(
                     entry.usage.startswith("a!ticket")

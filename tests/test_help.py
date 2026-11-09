@@ -173,6 +173,56 @@ class HelpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embed.fields[0].value, "Uncategorized")
         self.assertNotIn(emoji_markup("utility"), embed.fields[0].value)
 
+    def test_new_categories_are_ordered_and_parent_groups_are_not_listed(self) -> None:
+        welcome_child = _prefix_command(
+            "setup",
+            qualified_name="welcome setup",
+            cog_name="WelcomeCog",
+        )
+        welcome_group = _prefix_command("welcome", cog_name="WelcomeCog")
+        welcome_group.commands = (welcome_child,)
+        reaction_child = _prefix_command(
+            "add",
+            qualified_name="reactionrole add",
+            cog_name="ReactionRolesCog",
+        )
+        logging_child = _prefix_command(
+            "event",
+            qualified_name="logging event",
+            cog_name="LoggingCog",
+        )
+        slash_commands = [
+            SimpleNamespace(
+                qualified_name=command.qualified_name,
+                cog_name=command.cog_name,
+                binding=None,
+                description=command.help,
+                parameters=(),
+                hidden=False,
+                extras={},
+                checks=(),
+            )
+            for command in (welcome_child, reaction_child, logging_child)
+        ]
+        bot = _FakeBot(
+            [welcome_group, welcome_child, reaction_child, logging_child],
+            slash_commands,
+        )
+
+        registry = discover_commands(bot)
+        self.assertEqual(
+            ordered_categories(registry),
+            ["Welcome", "Reaction Roles", "Logging"],
+        )
+        for mode in ("prefix", "slash"):
+            entries = registry[mode]
+            self.assertEqual(len(entries["Welcome"]), 1)
+            self.assertEqual(len(entries["Reaction Roles"]), 1)
+            self.assertEqual(len(entries["Logging"]), 1)
+            self.assertNotIn("welcome", {
+                item.qualified_name for group in entries.values() for item in group
+            })
+
     def test_help_embeds_respect_discord_field_and_total_character_limits(self) -> None:
         long_entry = SimpleNamespace(
             qualified_name="command" * 100,
