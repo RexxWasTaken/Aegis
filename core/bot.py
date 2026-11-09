@@ -26,6 +26,10 @@ class AegisBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
+        intents.reactions = True
+        intents.voice_states = True
+        if hasattr(intents, "moderation"):
+            intents.moderation = True
         super().__init__(command_prefix="a!", intents=intents, help_command=None)
         self.database_path = str(
             database_path or os.environ.get("AEGIS_DB_PATH", "data/moderation.sqlite3")

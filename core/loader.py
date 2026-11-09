@@ -22,6 +22,9 @@ COMMUNITY_EXTENSIONS = (
     "cogs.giveaway",
     "cogs.help",
     "cogs.music.commands",
+    "cogs.welcome",
+    "cogs.reaction_roles",
+    "cogs.logging",
 )
 
 
