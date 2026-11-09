@@ -30,6 +30,7 @@ COMMUNITY_COMMANDS = {
     "reactionrole",
     "logging",
 }
+OWNER_COMMANDS = {"owner", "noprefix"}
 MUSIC_COMMANDS = {
     "play",
     "pause",
@@ -50,7 +51,9 @@ MUSIC_COMMANDS = {
     "previous",
     "autoplay",
 }
-EXPECTED_COMMANDS = MODERATION_COMMANDS | COMMUNITY_COMMANDS | MUSIC_COMMANDS
+EXPECTED_COMMANDS = (
+    MODERATION_COMMANDS | COMMUNITY_COMMANDS | MUSIC_COMMANDS | OWNER_COMMANDS
+)
 
 
 class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):

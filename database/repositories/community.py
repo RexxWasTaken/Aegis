@@ -255,6 +255,23 @@ class CommunityRepository:
                 )
                 """
             )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS guild_prefixes (
+                    guild_id INTEGER PRIMARY KEY,
+                    prefix TEXT NOT NULL
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS no_prefix_users (
+                    user_id INTEGER PRIMARY KEY,
+                    added_by INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
             await self._db.commit()
 
     def _connection(self) -> aiosqlite.Connection:
@@ -941,6 +958,94 @@ class CommunityRepository:
                 )
             await db.commit()
         return cursor.rowcount == 1
+
+    async def get_guild_prefix(self, guild_id: int, *, default_prefix: str) -> str:
+        if guild_id <= 0:
+            raise ValueError("A valid server ID is required.")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT prefix FROM guild_prefixes WHERE guild_id = ?",
+                (guild_id,),
+            )
+            row = await cursor.fetchone()
+        return str(row["prefix"]) if row is not None else default_prefix
+
+    async def set_guild_prefix(self, *, guild_id: int, prefix: str) -> str:
+        if guild_id <= 0:
+            raise ValueError("A valid server ID is required.")
+        normalized = prefix.strip()
+        if (
+            not normalized
+            or len(normalized) > 16
+            or any(character.isspace() for character in normalized)
+            or normalized.startswith("<@")
+        ):
+            raise ValueError(
+                "The prefix must be 1–16 non-whitespace characters and cannot be a mention."
+            )
+        async with self._lock:
+            await self._connection().execute(
+                """
+                INSERT INTO guild_prefixes (guild_id, prefix)
+                VALUES (?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET prefix = excluded.prefix
+                """,
+                (guild_id, normalized),
+            )
+            await self._connection().commit()
+        return normalized
+
+    async def add_no_prefix_user(self, *, user_id: int, added_by: int) -> bool:
+        self._validate_discord_id(user_id, "user")
+        self._validate_discord_id(added_by, "owner")
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                INSERT OR IGNORE INTO no_prefix_users (user_id, added_by, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, added_by, created_at),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def remove_no_prefix_user(self, *, user_id: int) -> bool:
+        self._validate_discord_id(user_id, "user")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "DELETE FROM no_prefix_users WHERE user_id = ?",
+                (user_id,),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def has_no_prefix_user(self, user_id: int) -> bool:
+        self._validate_discord_id(user_id, "user")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT 1 FROM no_prefix_users WHERE user_id = ?",
+                (user_id,),
+            )
+            return await cursor.fetchone() is not None
+
+    async def list_no_prefix_users(self) -> list[int]:
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "SELECT user_id FROM no_prefix_users ORDER BY user_id"
+            )
+            rows = await cursor.fetchall()
+        return [int(row["user_id"]) for row in rows]
+
+    @staticmethod
+    def _validate_discord_id(value: int, label: str) -> None:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+            or value > 9_223_372_036_854_775_807
+        ):
+            raise ValueError(f"A valid Discord {label} ID is required.")
 
     async def close(self) -> None:
         async with self._lock:

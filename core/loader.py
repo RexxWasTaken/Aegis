@@ -21,6 +21,7 @@ COMMUNITY_EXTENSIONS = (
     "cogs.ticket",
     "cogs.giveaway",
     "cogs.help",
+    "cogs.owner",
     "cogs.music.commands",
     "cogs.welcome",
     "cogs.reaction_roles",
