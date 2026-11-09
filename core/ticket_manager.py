@@ -171,6 +171,7 @@ class TicketManager:
         creator = channel.guild.get_member(ticket.creator_id)
         if creator is not None:
             overwrite = channel.overwrites_for(creator)
+            original_send_messages = overwrite.send_messages
             overwrite.send_messages = False
             try:
                 await channel.set_permissions(
@@ -189,14 +190,24 @@ class TicketManager:
                 status="closed",
                 closed_at=closed_at,
             )
-        except Exception:
+        except Exception as persistence_error:
             if creator is not None:
-                overwrite.send_messages = True
+                overwrite.send_messages = original_send_messages
                 try:
-                    await channel.set_permissions(creator, overwrite=overwrite)
-                except discord.HTTPException:
-                    pass
-            raise
+                    await channel.set_permissions(
+                        creator,
+                        overwrite=overwrite,
+                        reason="AEGIS ticket close could not be persisted",
+                    )
+                except discord.HTTPException as rollback_error:
+                    raise TicketManagerError(
+                        "Ticket closure failed, and the creator's previous channel "
+                        "permissions could not be restored."
+                    ) from rollback_error
+            raise TicketManagerError(
+                "Ticket closure could not be persisted; the creator's previous "
+                "channel permissions were restored."
+            ) from persistence_error
         try:
             transcript = await self.transcript_bytes(channel)
         except discord.HTTPException:

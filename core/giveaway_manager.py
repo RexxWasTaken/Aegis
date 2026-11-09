@@ -281,6 +281,10 @@ class GiveawayManager:
             )
 
     async def delete(self, message_id: int) -> None:
+        async with self._lifecycle_lock:
+            await self._delete_locked(message_id)
+
+    async def _delete_locked(self, message_id: int) -> None:
         giveaway = await self.repository.get_giveaway(message_id)
         if giveaway is None:
             raise GiveawayManagerError("No giveaway is registered for that message ID.")
