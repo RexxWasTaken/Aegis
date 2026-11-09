@@ -37,6 +37,24 @@ COMMUNITY_COMMANDS = {
     "calculate",
     "poll",
     "embed",
+    "userinfo",
+    "serverinfo",
+    "roleinfo",
+    "channelinfo",
+    "botinfo",
+    "inviteinfo",
+    "avatar",
+    "banner",
+    "eightball",
+    "coinflip",
+    "dice",
+    "choose",
+    "rate",
+    "ship",
+    "joke",
+    "voiceinfo",
+    "voicestate",
+    "voiceusers",
 }
 OWNER_COMMANDS = {"owner", "noprefix"}
 MUSIC_COMMANDS = {
@@ -121,6 +139,24 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                 "logging ignore",
                 "logging status",
                 "logging disable",
+                "userinfo",
+                "serverinfo",
+                "roleinfo",
+                "channelinfo",
+                "botinfo",
+                "inviteinfo",
+                "avatar",
+                "banner",
+                "eightball",
+                "coinflip",
+                "dice",
+                "choose",
+                "rate",
+                "ship",
+                "joke",
+                "voiceinfo",
+                "voicestate",
+                "voiceusers",
             ):
                 self.assertIn(command_name, registered_names)
             self.assertNotIn("logging event", registered_names)
@@ -144,6 +180,9 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
                     "Welcome": 5,
                     "Reaction Roles": 5,
                     "Logging": 5,
+                    "Information": 8,
+                    "Fun": 7,
+                    "Voice": 3,
                 }
                 for category, expected_count in expected_category_counts.items():
                     self.assertEqual(
