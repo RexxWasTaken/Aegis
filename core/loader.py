@@ -23,6 +23,7 @@ COMMUNITY_EXTENSIONS = (
     "cogs.help",
     "cogs.owner",
     "cogs.music.commands",
+    "cogs.utility",
     "cogs.welcome",
     "cogs.reaction_roles",
     "cogs.logging",

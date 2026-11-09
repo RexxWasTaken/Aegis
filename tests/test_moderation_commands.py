@@ -29,6 +29,14 @@ COMMUNITY_COMMANDS = {
     "goodbye",
     "reactionrole",
     "logging",
+    "remind",
+    "reminders",
+    "cancelreminder",
+    "prefix",
+    "mentionprefix",
+    "calculate",
+    "poll",
+    "embed",
 }
 OWNER_COMMANDS = {"owner", "noprefix"}
 MUSIC_COMMANDS = {
@@ -63,6 +71,7 @@ class ModerationCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
             intents=discord.Intents.none(),
             help_command=None,
         )
+        bot.default_prefix = "a!"
         bot.moderation_service = object()
         community_repository = CommunityRepository(":memory:")
         await community_repository.initialize()

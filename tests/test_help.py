@@ -55,6 +55,7 @@ class _FakeTree:
 
 class _FakeBot:
     def __init__(self, prefix_commands, slash_commands=()):
+        self.default_prefix = "a!"
         self._commands = prefix_commands
         self._by_name = {}
         for command in prefix_commands:
@@ -158,6 +159,18 @@ class HelpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(slash)
         self.assertEqual(slash.usage, "/ticket info [channel]")
         self.assertEqual(slash.category, "Ticket")
+
+    def test_lookup_and_display_usage_follow_the_active_custom_prefix(self) -> None:
+        by_custom_prefix = find_command(self.bot, "?b", prefix="?")
+        self.assertIsNotNone(by_custom_prefix)
+        self.assertEqual(by_custom_prefix.qualified_name, "ban")
+        self.assertEqual(by_custom_prefix.usage, "?ban <member> [reason]")
+
+        view = HelpView(self.bot, author_id=42, prefix="?")
+        self.assertEqual(
+            view.registry["prefix"]["Moderation"][0].usage,
+            "?ban <member> [reason]",
+        )
 
     def test_uncategorized_commands_do_not_get_a_utility_emoji(self) -> None:
         command = _prefix_command(
