@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from core.welcome_manager import WelcomeManager
 from database.repositories.community import CommunityRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 def _manager(bot: commands.Bot) -> WelcomeManager:
@@ -147,14 +152,14 @@ class WelcomeCog(commands.Cog):
         try:
             await self.manager.send_for_member(member, "welcome")
         except discord.HTTPException:
-            self.bot.logger.warning("Welcome message could not be delivered.")
+            logger.warning("Welcome message could not be delivered in guild %s.", member.guild.id)
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
         try:
             await self.manager.send_for_member(member, "goodbye")
         except discord.HTTPException:
-            self.bot.logger.warning("Goodbye message could not be delivered.")
+            logger.warning("Goodbye message could not be delivered in guild %s.", member.guild.id)
 
 
 async def setup(bot: commands.Bot) -> None:

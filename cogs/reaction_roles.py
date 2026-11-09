@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -11,6 +13,9 @@ from core.reaction_role_manager import (
     ReactionRoleManager,
 )
 from database.repositories.community import CommunityRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 def _manager(bot: commands.Bot) -> ReactionRoleManager:
@@ -172,7 +177,7 @@ class ReactionRolesCog(commands.Cog):
         try:
             await self.manager.handle_reaction_add(payload)
         except (ValueError, discord.HTTPException):
-            self.bot.logger.exception("Reaction-role add event failed.")
+            logger.exception("Reaction-role add event failed.")
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(
@@ -182,7 +187,7 @@ class ReactionRolesCog(commands.Cog):
         try:
             await self.manager.handle_reaction_remove(payload)
         except (ValueError, discord.HTTPException):
-            self.bot.logger.exception("Reaction-role remove event failed.")
+            logger.exception("Reaction-role remove event failed.")
 
 
 async def setup(bot: commands.Bot) -> None:

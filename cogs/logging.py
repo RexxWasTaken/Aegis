@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -11,7 +13,10 @@ from core.logging_manager import (
     EVENT_LABELS,
     LoggingManager,
 )
-from database.repositories.community import CommunityRepository, LoggingConfig
+from database.repositories.community import CommunityRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 def _manager(bot: commands.Bot) -> LoggingManager:
@@ -207,7 +212,7 @@ class LoggingCog(commands.Cog):
                 role_ids=role_ids,
             )
         except discord.HTTPException:
-            self.bot.logger.warning("Could not send a %s log entry.", event)
+            logger.warning("Could not send a %s log entry.", event)
 
     async def _executor(
         self,
@@ -221,6 +226,7 @@ class LoggingCog(commands.Cog):
             target_id=target_id,
         )
 
+    @commands.Cog.listener()
     async def on_message_edit(
         self,
         before: discord.Message,
