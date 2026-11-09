@@ -34,6 +34,13 @@ def _category_heading(category: str) -> str:
     return f"{emoji_markup(emoji_name)} {category}" if emoji_name else category
 
 
+def _command_heading(info: Any) -> str:
+    emoji_name = getattr(info, "emoji", None)
+    emoji = emoji_markup(emoji_name) if isinstance(emoji_name, str) else ""
+    qualified_name = str(getattr(info, "qualified_name", ""))
+    return f"{emoji} {qualified_name}".strip()
+
+
 def help_front_page(categories: Sequence[str]) -> discord.Embed:
     """Build the exact Help home copy and only list registered categories."""
     embed = discord.Embed(
@@ -103,7 +110,7 @@ def help_category_page(
             f"Verified examples: {examples}"
         )
         embed.add_field(
-            name=_limited(entry.qualified_name, 256),
+            name=_limited(_command_heading(entry), 256),
             value=_limited(value, 800),
             inline=False,
         )
@@ -125,7 +132,7 @@ def help_command_details(info: Any) -> discord.Embed:
         description=_limited(info.description, 1024),
         color=HELP_COLOR,
     )
-    embed.add_field(name="Command", value=_limited(info.qualified_name, 256), inline=False)
+    embed.add_field(name="Command", value=_limited(_command_heading(info), 256), inline=False)
     embed.add_field(name="Usage", value=_limited(info.usage, 512), inline=False)
     embed.add_field(name="Aliases", value=_limited(aliases, 512), inline=False)
     embed.add_field(

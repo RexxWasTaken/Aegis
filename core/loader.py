@@ -1,4 +1,4 @@
-"""Moderation and community extension loading."""
+"""AEGIS moderation, community, and music extension loading."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ COMMUNITY_EXTENSIONS = (
     "cogs.ticket",
     "cogs.giveaway",
     "cogs.help",
+    "cogs.music.commands",
 )
 
 
