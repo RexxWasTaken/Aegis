@@ -15,6 +15,13 @@ class HelpCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
+    async def _display_prefix(self, ctx: commands.Context) -> str:
+        getter = getattr(self.bot, "get_guild_prefix", None)
+        if callable(getter):
+            guild_id = ctx.guild.id if ctx.guild is not None else None
+            return await getter(guild_id)
+        return str(getattr(self.bot, "default_prefix", "") or "")
+
     @commands.hybrid_command(
         name="help",
         description="Browse registered AEGIS commands or inspect one command.",
@@ -22,8 +29,9 @@ class HelpCog(commands.Cog):
     @app_commands.describe(command="A registered command name or prefix alias.")
     async def help(self, ctx: commands.Context, *, command: str | None = None) -> None:
         """Open Help or show details for a registered command or alias."""
+        display_prefix = await self._display_prefix(ctx)
         if command:
-            info = find_command(self.bot, command)
+            info = find_command(self.bot, command, prefix=display_prefix)
             if info is None:
                 embed = discord.Embed(
                     title=f"{emoji_markup('error')} Command not found",
@@ -38,7 +46,7 @@ class HelpCog(commands.Cog):
             await send_command_details(ctx, info)
             return
 
-        view = HelpView(self.bot, ctx.author.id)
+        view = HelpView(self.bot, ctx.author.id, prefix=display_prefix)
         embed, _ = view._page_data()
         try:
             if ctx.interaction is not None:

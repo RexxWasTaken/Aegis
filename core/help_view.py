@@ -28,6 +28,10 @@ CATEGORY_ORDER = (
     "Giveaway",
     "Security",
     "Utility",
+    "Information",
+    "Fun",
+    "Games",
+    "Voice",
     "AI",
     "Owner",
 )
@@ -101,6 +105,10 @@ def _category_for(command: object) -> str:
         ("music", "Music"),
         ("security", "Security"),
         ("utility", "Utility"),
+        ("information", "Information"),
+        ("fun", "Fun"),
+        ("games", "Games"),
+        ("voice", "Voice"),
         ("owner", "Owner"),
         ("ai", "AI"),
     ):
@@ -174,10 +182,13 @@ def _slash_usage(command: object) -> str:
     return " ".join(parts)
 
 
-def _prefix_info(command: commands.Command[Any, ..., Any]) -> CommandInfo:
+def _prefix_info(
+    command: commands.Command[Any, ..., Any],
+    prefix: str = "",
+) -> CommandInfo:
     qualified_name = str(command.qualified_name)
     signature = str(getattr(command, "signature", "") or "").strip()
-    usage = f"a!{qualified_name} {signature}".strip()
+    usage = f"{prefix}{qualified_name} {signature}".strip()
     description = str(command.help or command.short_doc or "").strip()
     return CommandInfo(
         name=command.name,
@@ -213,8 +224,15 @@ def _slash_info(command: object, prefix_command: object | None = None) -> Comman
 
 def discover_commands(
     bot: commands.Bot,
+    *,
+    prefix: str | None = None,
 ) -> dict[str, dict[str, list[CommandInfo]]]:
     """Read registered prefix and application commands without a fake catalog."""
+    display_prefix = (
+        str(getattr(bot, "default_prefix", "") or "")
+        if prefix is None
+        else prefix
+    )
     registry: dict[str, dict[str, list[CommandInfo]]] = {
         "prefix": defaultdict(list),
         "slash": defaultdict(list),
@@ -227,7 +245,7 @@ def discover_commands(
             or bool(getattr(command, "commands", ()))
         ):
             continue
-        info = _prefix_info(command)
+        info = _prefix_info(command, display_prefix)
         registry["prefix"][info.category].append(info)
 
     for command in bot.tree.walk_commands():
@@ -271,12 +289,24 @@ def ordered_categories(
     return preferred + additional
 
 
-def find_command(bot: commands.Bot, query: str) -> CommandInfo | None:
-    """Resolve a registered prefix name or alias, then a slash command name."""
-    normalized = query.strip().removeprefix("a!").strip()
-    prefix = bot.get_command(normalized)
-    if prefix is not None and not getattr(prefix, "hidden", False):
-        return _prefix_info(prefix)
+def find_command(
+    bot: commands.Bot,
+    query: str,
+    *,
+    prefix: str | None = None,
+) -> CommandInfo | None:
+    """Resolve a registered name or alias using the active server prefix."""
+    display_prefix = (
+        str(getattr(bot, "default_prefix", "") or "")
+        if prefix is None
+        else prefix
+    )
+    normalized = query.strip()
+    if display_prefix and normalized.startswith(display_prefix):
+        normalized = normalized[len(display_prefix) :].strip()
+    prefix_command = bot.get_command(normalized)
+    if prefix_command is not None and not getattr(prefix_command, "hidden", False):
+        return _prefix_info(prefix_command, display_prefix)
     slash_name = normalized.removeprefix("/")
     slash = next(
         (
@@ -360,11 +390,23 @@ class HelpCategorySelect(discord.ui.Select):
 class HelpView(discord.ui.View):
     """Paginated Help UI restricted to the user who invoked the command."""
 
-    def __init__(self, bot: commands.Bot, author_id: int, timeout: float = 180) -> None:
+    def __init__(
+        self,
+        bot: commands.Bot,
+        author_id: int,
+        timeout: float = 180,
+        *,
+        prefix: str | None = None,
+    ) -> None:
         super().__init__(timeout=timeout)
         self.bot = bot
         self.author_id = author_id
-        self.registry = discover_commands(bot)
+        self.prefix = (
+            str(getattr(bot, "default_prefix", "") or "")
+            if prefix is None
+            else prefix
+        )
+        self.registry = discover_commands(bot, prefix=self.prefix)
         self.categories = ordered_categories(self.registry)
         self.mode = "prefix"
         self.category: str | None = None

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -84,6 +84,15 @@ class LoggingConfig:
     ignored_channels: tuple[int, ...] = ()
     ignored_users: tuple[int, ...] = ()
     ignored_roles: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReminderRecord:
+    reminder_id: int
+    user_id: int
+    message: str
+    remind_at: str
+    status: str
 
 
 class CommunityRepository:
@@ -271,6 +280,36 @@ class CommunityRepository:
                     created_at TEXT NOT NULL
                 )
                 """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reminders (
+                    reminder_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    message TEXT NOT NULL,
+                    remind_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'claimed', 'failed')),
+                    claimed_at TEXT
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_reminders_due
+                ON reminders(status, remind_at)
+                """
+            )
+            stale_before = (
+                datetime.now(timezone.utc) - timedelta(minutes=10)
+            ).isoformat(timespec="seconds")
+            await self._db.execute(
+                """
+                UPDATE reminders
+                SET status = 'pending', claimed_at = NULL
+                WHERE status = 'claimed' AND claimed_at <= ?
+                """,
+                (stale_before,),
             )
             await self._db.commit()
 
@@ -994,6 +1033,156 @@ class CommunityRepository:
             )
             await self._connection().commit()
         return normalized
+
+    async def create_reminder(
+        self,
+        *,
+        user_id: int,
+        message: str,
+        remind_at: datetime,
+    ) -> int:
+        self._validate_discord_id(user_id, "user")
+        normalized_message = message.strip()
+        if not normalized_message or len(normalized_message) > 1000:
+            raise ValueError("A reminder must contain 1–1000 characters.")
+        if remind_at.tzinfo is None or remind_at.utcoffset() is None:
+            raise ValueError("The reminder time must include a timezone.")
+        normalized_time = remind_at.astimezone(timezone.utc).isoformat(timespec="seconds")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                INSERT INTO reminders (user_id, message, remind_at)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, normalized_message, normalized_time),
+            )
+            await self._connection().commit()
+            return int(cursor.lastrowid)
+
+    async def list_reminders(
+        self,
+        *,
+        user_id: int,
+        limit: int = 20,
+    ) -> list[ReminderRecord]:
+        self._validate_discord_id(user_id, "user")
+        safe_limit = min(max(int(limit), 1), 50)
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT reminder_id, user_id, message, remind_at, status
+                FROM reminders
+                WHERE user_id = ? AND status IN ('pending', 'failed')
+                ORDER BY remind_at, reminder_id
+                LIMIT ?
+                """,
+                (user_id, safe_limit),
+            )
+            rows = await cursor.fetchall()
+        return [
+            ReminderRecord(
+                reminder_id=int(row["reminder_id"]),
+                user_id=int(row["user_id"]),
+                message=str(row["message"]),
+                remind_at=str(row["remind_at"]),
+                status=str(row["status"]),
+            )
+            for row in rows
+        ]
+
+    async def claim_due_reminders(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 50,
+    ) -> list[ReminderRecord]:
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None or current_time.utcoffset() is None:
+            raise ValueError("The current time must include a timezone.")
+        normalized_time = current_time.astimezone(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        claimed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        safe_limit = min(max(int(limit), 1), 100)
+        async with self._lock:
+            db = self._connection()
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await db.execute(
+                    """
+                    SELECT reminder_id, user_id, message, remind_at, status
+                    FROM reminders
+                    WHERE status = 'pending' AND remind_at <= ?
+                    ORDER BY remind_at, reminder_id
+                    LIMIT ?
+                    """,
+                    (normalized_time, safe_limit),
+                )
+                rows = await cursor.fetchall()
+                if rows:
+                    ids = [int(row["reminder_id"]) for row in rows]
+                    placeholders = ",".join("?" for _ in ids)
+                    await db.execute(
+                        f"""
+                        UPDATE reminders SET status = 'claimed', claimed_at = ?
+                        WHERE status = 'pending' AND reminder_id IN ({placeholders})
+                        """,
+                        (claimed_at, *ids),
+                    )
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+        return [
+            ReminderRecord(
+                reminder_id=int(row["reminder_id"]),
+                user_id=int(row["user_id"]),
+                message=str(row["message"]),
+                remind_at=str(row["remind_at"]),
+                status="claimed",
+            )
+            for row in rows
+        ]
+
+    async def complete_reminder(self, reminder_id: int) -> bool:
+        if isinstance(reminder_id, bool) or not isinstance(reminder_id, int) or reminder_id <= 0:
+            raise ValueError("A valid reminder ID is required.")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                "DELETE FROM reminders WHERE reminder_id = ? AND status = 'claimed'",
+                (reminder_id,),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def fail_reminder(self, reminder_id: int) -> bool:
+        if isinstance(reminder_id, bool) or not isinstance(reminder_id, int) or reminder_id <= 0:
+            raise ValueError("A valid reminder ID is required.")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                UPDATE reminders SET status = 'failed', claimed_at = NULL
+                WHERE reminder_id = ? AND status = 'claimed'
+                """,
+                (reminder_id,),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def cancel_reminder(self, *, reminder_id: int, user_id: int) -> bool:
+        self._validate_discord_id(user_id, "user")
+        if isinstance(reminder_id, bool) or not isinstance(reminder_id, int) or reminder_id <= 0:
+            raise ValueError("A valid reminder ID is required.")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                DELETE FROM reminders
+                WHERE reminder_id = ? AND user_id = ? AND status IN ('pending', 'failed')
+                """,
+                (reminder_id, user_id),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
 
     async def add_no_prefix_user(self, *, user_id: int, added_by: int) -> bool:
         self._validate_discord_id(user_id, "user")
