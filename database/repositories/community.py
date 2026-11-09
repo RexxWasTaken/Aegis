@@ -95,6 +95,17 @@ class ReminderRecord:
     status: str
 
 
+@dataclass(frozen=True)
+class SecurityConfig:
+    guild_id: int
+    enabled: bool = False
+    threshold: int = 3
+    window_seconds: int = 15
+    mention_limit: int = 5
+    log_channel_id: int | None = None
+    action: str = "log"
+
+
 class CommunityRepository:
     """Store community state in the existing AEGIS SQLite database."""
 
@@ -298,6 +309,33 @@ class CommunityRepository:
                 """
                 CREATE INDEX IF NOT EXISTS idx_reminders_due
                 ON reminders(status, remind_at)
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS security_configs (
+                    guild_id INTEGER PRIMARY KEY,
+                    enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+                    threshold INTEGER NOT NULL DEFAULT 3
+                        CHECK(threshold BETWEEN 2 AND 10),
+                    window_seconds INTEGER NOT NULL DEFAULT 15
+                        CHECK(window_seconds BETWEEN 5 AND 60),
+                    mention_limit INTEGER NOT NULL DEFAULT 5
+                        CHECK(mention_limit BETWEEN 2 AND 50),
+                    log_channel_id INTEGER,
+                    action TEXT NOT NULL DEFAULT 'log' CHECK(action IN ('log', 'kick'))
+                )
+                """
+            )
+            await self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS security_trusted_users (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    added_by INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(guild_id, user_id)
+                )
                 """
             )
             stale_before = (
@@ -1033,6 +1071,156 @@ class CommunityRepository:
             )
             await self._connection().commit()
         return normalized
+
+    async def get_security_config(self, guild_id: int) -> SecurityConfig:
+        self._validate_discord_id(guild_id, "server")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT enabled, threshold, window_seconds, mention_limit,
+                       log_channel_id, action
+                FROM security_configs WHERE guild_id = ?
+                """,
+                (guild_id,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return SecurityConfig(guild_id=guild_id)
+        return SecurityConfig(
+            guild_id=guild_id,
+            enabled=bool(row["enabled"]),
+            threshold=int(row["threshold"]),
+            window_seconds=int(row["window_seconds"]),
+            mention_limit=int(row["mention_limit"]),
+            log_channel_id=(
+                int(row["log_channel_id"])
+                if row["log_channel_id"] is not None
+                else None
+            ),
+            action=str(row["action"]),
+        )
+
+    async def set_security_config(self, config: SecurityConfig) -> SecurityConfig:
+        self._validate_discord_id(config.guild_id, "server")
+        if not isinstance(config.enabled, bool):
+            raise ValueError("Security protection must be enabled or disabled.")
+        if (
+            isinstance(config.threshold, bool)
+            or not isinstance(config.threshold, int)
+            or not 2 <= config.threshold <= 10
+        ):
+            raise ValueError("The action threshold must be between 2 and 10.")
+        if (
+            isinstance(config.window_seconds, bool)
+            or not isinstance(config.window_seconds, int)
+            or not 5 <= config.window_seconds <= 60
+        ):
+            raise ValueError("The detection window must be between 5 and 60 seconds.")
+        if (
+            isinstance(config.mention_limit, bool)
+            or not isinstance(config.mention_limit, int)
+            or not 2 <= config.mention_limit <= 50
+        ):
+            raise ValueError("The mass-mention limit must be between 2 and 50.")
+        if config.action not in ("log", "kick"):
+            raise ValueError("The security action must be `log` or `kick`.")
+        if config.log_channel_id is not None:
+            self._validate_discord_id(config.log_channel_id, "channel")
+        async with self._lock:
+            await self._connection().execute(
+                """
+                INSERT INTO security_configs
+                    (guild_id, enabled, threshold, window_seconds, mention_limit,
+                     log_channel_id, action)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    enabled = excluded.enabled,
+                    threshold = excluded.threshold,
+                    window_seconds = excluded.window_seconds,
+                    mention_limit = excluded.mention_limit,
+                    log_channel_id = excluded.log_channel_id,
+                    action = excluded.action
+                """,
+                (
+                    config.guild_id,
+                    int(config.enabled),
+                    config.threshold,
+                    config.window_seconds,
+                    config.mention_limit,
+                    config.log_channel_id,
+                    config.action,
+                ),
+            )
+            await self._connection().commit()
+        return config
+
+    async def add_security_trusted_user(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        added_by: int,
+    ) -> bool:
+        self._validate_discord_id(guild_id, "server")
+        self._validate_discord_id(user_id, "user")
+        self._validate_discord_id(added_by, "moderator")
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                INSERT OR IGNORE INTO security_trusted_users
+                    (guild_id, user_id, added_by, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (guild_id, user_id, added_by, created_at),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def remove_security_trusted_user(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+    ) -> bool:
+        self._validate_discord_id(guild_id, "server")
+        self._validate_discord_id(user_id, "user")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                DELETE FROM security_trusted_users
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (guild_id, user_id),
+            )
+            await self._connection().commit()
+        return cursor.rowcount == 1
+
+    async def is_security_trusted(self, *, guild_id: int, user_id: int) -> bool:
+        self._validate_discord_id(guild_id, "server")
+        self._validate_discord_id(user_id, "user")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT 1 FROM security_trusted_users
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (guild_id, user_id),
+            )
+            return await cursor.fetchone() is not None
+
+    async def list_security_trusted_users(self, *, guild_id: int) -> list[int]:
+        self._validate_discord_id(guild_id, "server")
+        async with self._lock:
+            cursor = await self._connection().execute(
+                """
+                SELECT user_id FROM security_trusted_users
+                WHERE guild_id = ? ORDER BY user_id
+                """,
+                (guild_id,),
+            )
+            rows = await cursor.fetchall()
+        return [int(row["user_id"]) for row in rows]
 
     async def create_reminder(
         self,
